@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.3] - 2026-06-20
+
+### Changed
+- **Default translation model: qwen3.5:0.8b** (was qwen3.5:4b). 0.8b is the new default:
+  - Disk: 1.0 GB (was 3.4 GB) — 70% smaller
+  - RAM at inference: ~1.3 GB (was ~4 GB)
+  - Latency: ~1s warm (vs ~5s cold)
+  - Vietnamese output: still clean, tone + formal accuracy maintained
+- **Model fallback chain rebalanced**: `0.8b → 1.5b → 4b → 8b` (was `4b → 1.5b → 8b`).
+- **Popup quality slider**: added 0.8b option at top, now default. Option order: Fast 0.8B → Balanced 1.5B → Quality 4B → Maximum 8B.
+- **install.sh**: pulls `qwen3.5:0.8b` as default; also attempts `qwen3.5:1.5b` as automatic fallback.
+- **README**: updated Quick Start to reflect new model + smaller footprint.
+
 ## [v1.0.2] - 2026-06-20
 
 ### Added

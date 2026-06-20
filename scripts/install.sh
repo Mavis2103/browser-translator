@@ -53,8 +53,11 @@ fi
 export PATH="$HOME/.local/bin:$PATH"
 
 # 4. Pull translation model
-echo "[*] Pulling translation model (qwen3.5:4b, ~3.4GB on disk)..."
-"$HOME/.local/bin/ollama" pull qwen3.5:4b
+echo "[*] Pulling translation model (qwen3.5:0.8b, ~1.0GB on disk; default)..."
+"$HOME/.local/bin/ollama" pull qwen3.5:0.8b
+# Also pull fallback chain (optional but recommended for resilience)
+echo "[*] Pulling fallback models (1.5b → 4b) ..."
+"$HOME/.local/bin/ollama" pull qwen3.5:1.5b 2>/dev/null || echo "  (optional, skipped)"
 
 # 5. Verify
 echo "[*] Running verification..."
@@ -63,8 +66,8 @@ import urllib.request, json
 try:
     with urllib.request.urlopen('http://localhost:11434/api/tags', timeout=3) as r:
         models = [m['name'] for m in json.loads(r.read()).get('models', [])]
-        assert 'qwen3.5:4b' in models, 'qwen3.5:4b not pulled'
-        print('  ✅ Ollama: qwen3.5:4b OK')
+        assert 'qwen3.5:0.8b' in models, 'qwen3.5:0.8b not pulled'
+        print('  ✅ Ollama: qwen3.5:0.8b OK (chain: 0.8b → 1.5b → 4b → 8b)')
 except Exception as e:
     print(f'  ⚠️  Ollama not running. Run: ollama serve')
     print(f'      ({e})')

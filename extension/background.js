@@ -123,7 +123,7 @@ function handleBackendMessage(data) {
 
 // ========== Audio Capture (tabCapture) ==========
 
-async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', translationModel = 'qwen3.5:4b') {
+async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', translationModel = 'qwen3.5:0.8b') {
   if (isCapturing) {
     console.warn('[BT] Already capturing audio');
     return { success: false, error: 'Already capturing' };

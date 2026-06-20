@@ -59,7 +59,7 @@ This installs:
 - System packages: `ffmpeg`, `zstd`, `curl`
 - Python deps via `uv`
 - Ollama (auto-downloads if missing) at `~/.local/bin/ollama`
-- `qwen3.5:4b` translation model (~3.4GB)
+- `qwen3.5:0.8b` translation model (~1.0GB; chain falls back to 1.5b → 4b → 8b)
 
 ### 2. Run
 

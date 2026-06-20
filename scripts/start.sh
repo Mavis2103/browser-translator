@@ -45,7 +45,7 @@ fi
 
 # 2. Check if Qwen3.5 model is pulled
 if ! curl -s http://localhost:11434/api/tags 2>/dev/null | grep -q "qwen3.5"; then
-    echo "[!] Qwen3.5:4b not pulled. Run: $OLLAMA_BIN pull qwen3.5:4b"
+    echo "[!] Qwen3.5:0.8b not pulled. Run: $OLLAMA_BIN pull qwen3.5:0.8b"
     exit 1
 fi
 

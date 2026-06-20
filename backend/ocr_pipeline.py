@@ -23,7 +23,7 @@ class OcrPipeline:
         # Settings
         self.source_lang = "auto"
         self.target_lang = "vi"
-        self.translation_model = "qwen3.5:4b"
+        self.translation_model = "qwen3.5:0.8b"
 
     def load_models(self):
         """Load PaddleOCR model."""

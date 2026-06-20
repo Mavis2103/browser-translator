@@ -23,7 +23,7 @@ class AudioPipeline:
         self.stt_model = None
         self.tts_engine = None
         self._loaded = False
-
+        self.translation_model = "qwen3.5:0.8b"  # default (small/fast); may be overridden via set_language
         # Buffer / silence tracking — flush on natural pause rather than fixed window.
         self.audio_buffer = bytearray()
         self.buffer_duration = 0  # seconds of audio buffered
@@ -40,7 +40,7 @@ class AudioPipeline:
         # Settings
         self.source_lang = "auto"
         self.target_lang = "vi"
-        self.translation_model = "qwen3.5:4b"  # may be overridden via set_language
+        self.translation_model = "qwen3.5:0.8b"  # may be overridden via set_language
 
     def load_models(self):
         """Load Moonshine STT and TTS models."""

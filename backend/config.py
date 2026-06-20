@@ -10,11 +10,11 @@ DATA_DIR = BACKEND_DIR / "data"
 
 # Ollama
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-TRANSLATION_MODEL = os.environ.get("TRANSLATION_MODEL", "qwen3.5:4b")
-# Comma-separated fallback chain: preferred, fallback, ...
+TRANSLATION_MODEL = os.environ.get("TRANSLATION_MODEL", "qwen3.5:0.8b")
+# Model chain: primary → fallback → ... (tried in order, first to respond wins)
 TRANSLATION_MODEL_CHAIN = os.environ.get(
     "TRANSLATION_MODEL_CHAIN",
-    "qwen3.5:4b,qwen3.5:1.5b,qwen3.5:8b,qwen:4b"
+    "qwen3.5:0.8b,qwen3.5:1.5b"
 ).split(",")
 
 # Moonshine STT
