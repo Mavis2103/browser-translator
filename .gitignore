@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+backend/data/
+
+# Model caches (auto-downloaded, not committed)
+paddlex/
+.paddlex/
+.cache/moonshine_voice/
+.cache/ollama/
+.cache/pip/
+
+# Logs
+*.log
+browser-translator*.log
+
+# Ollama (should be installed separately on each machine)
+ollama/

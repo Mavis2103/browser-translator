@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Browser Translator",
+  "version": "1.0.1",
+  "description": "Local AI-powered speech-to-speech translation & OCR page translation",
+  "permissions": [
+    "tabCapture",
+    "activeTab",
+    "scripting",
+    "storage",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "http://localhost:8765/*",
+    "ws://localhost:8765/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Browser Translator",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

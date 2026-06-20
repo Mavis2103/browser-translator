@@ -1,0 +1,19 @@
+/* Browser Translator - Content Script Styles */
+
+#bt-toast {
+  animation: bt-fadein 0.3s ease;
+}
+
+@keyframes bt-fadein {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+#bt-overlay-container div {
+  transition: opacity 0.2s ease;
+}
+
+#bt-overlay-container div:hover {
+  opacity: 1 !important;
+  background: rgba(26, 26, 46, 1) !important;
+}

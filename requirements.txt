@@ -1,0 +1,26 @@
+# Browser Translator — Dependencies
+# Install with: uv pip install -r requirements.txt
+
+# Server
+uvicorn>=0.27
+fastapi>=0.100
+pydantic>=2.0
+
+# Audio
+moonshine-voice>=0.0.62
+piper-tts>=1.2.0
+pydub>=0.25
+
+# OCR (paddlepaddle is a transitive dep but installed separately to skip GPU wheels)
+paddleocr>=3.7
+paddlepaddle>=3.0
+
+# CDP
+aiohttp>=3.9
+
+# System tools needed at runtime
+# apt: ffmpeg (for pydub webm decode)
+# Optional: piper-tts only used if moonshine_voice TTS disabled
+
+# Python stdlib (built-in, no install needed):
+# json, base64, struct, wave, logging, urllib, pathlib, tempfile, asyncio

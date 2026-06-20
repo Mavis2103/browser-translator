@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser Translator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <div class="header">
+      <h1><span class="logo">🌐</span> Browser Translator</h1>
+      <span id="connection-status" class="status-dot disconnected" title="Disconnected"></span>
+    </div>
+
+    <!-- Language Settings -->
+    <div class="section">
+      <div class="lang-row">
+        <div class="lang-group">
+          <label>Source</label>
+          <select id="source-lang">
+            <option value="auto">🌍 Auto Detect</option>
+            <option value="vi">🇻🇳 Vietnamese</option>
+            <option value="en">🇺🇸 English</option>
+            <option value="ja">🇯🇵 Japanese</option>
+            <option value="ko">🇰🇷 Korean</option>
+            <option value="zh">🇨🇳 Chinese</option>
+            <option value="th">🇹🇭 Thai</option>
+            <option value="id">🇮🇩 Indonesian</option>
+          </select>
+        </div>
+        <div class="swap-btn" id="swap-langs" title="Swap languages">⇄</div>
+        <div class="lang-group">
+          <label>Target</label>
+          <select id="target-lang">
+            <option value="vi" selected>🇻🇳 Vietnamese</option>
+            <option value="en">🇺🇸 English</option>
+            <option value="ja">🇯🇵 Japanese</option>
+            <option value="ko">🇰🇷 Korean</option>
+            <option value="zh">🇨🇳 Chinese</option>
+            <option value="th">🇹🇭 Thai</option>
+            <option value="id">🇮🇩 Indonesian</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio Translation Tab -->
+    <div class="section">
+      <div class="section-title">🎤 Speech-to-Speech Translation</div>
+      <div class="btn-row">
+        <button id="btn-start-audio" class="btn btn-primary">▶ Start Capture</button>
+        <button id="btn-stop-audio" class="btn btn-danger" disabled>⏹ Stop</button>
+      </div>
+      <div id="audio-status" class="status-text idle">Idle</div>
+    </div>
+
+    <!-- OCR Tab -->
+    <div class="section">
+      <div class="section-title">📄 OCR Page Translation</div>
+      <div class="btn-row">
+        <button id="btn-ocr" class="btn btn-secondary">📷 Capture & Translate</button>
+      </div>
+      <div id="ocr-status" class="status-text idle">Idle</div>
+    </div>
+
+    <!-- Results Area -->
+    <div class="section results-section">
+      <div class="section-title">📝 Translations</div>
+      <div id="results-panel" class="results-panel">
+        <div class="empty-state">No translations yet.<br>Start audio capture or OCR a page.</div>
+      </div>
+      <button id="btn-clear-results" class="btn btn-small" style="margin-top:6px">Clear</button>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span>Backend: <span id="backend-status">disconnected</span></span>
+      <span class="version">v1.0.0</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
