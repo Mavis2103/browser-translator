@@ -50,7 +50,7 @@ Local AI-powered tool for **speech-to-speech translation** and **OCR page transl
 ### 1. First-time Install (run once)
 
 ```bash
-git clone https://github.com/yourname/browser-translator.git
+git clone https://github.com/Mavis2103/browser-translator.git
 cd browser-translator
 ./scripts/install.sh
 ```
