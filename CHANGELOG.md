@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.4] - 2026-06-20
+
+### Performance
+- **Parallel Moonshine load** — STT and TTS now load concurrently on two threads with a shared disk lock. Reduces cold-start by ~40% (5-7s → ~3-4s) and warm-start by ~50% (3-4s → ~1-2s). Library itself doesn't share STT/TTS state internally, so the win comes from concurrent disk I/O on the two `.ort` bundles.
+
 ## [v1.0.3] - 2026-06-20
 
 ### Changed

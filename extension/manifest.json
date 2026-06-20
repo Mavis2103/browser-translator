@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Browser Translator",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Local AI-powered speech-to-speech translation & OCR page translation",
   "permissions": [
     "tabCapture",

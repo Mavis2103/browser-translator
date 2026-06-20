@@ -34,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger("browser-translator")
 
 # Create FastAPI app
-app = FastAPI(title="Browser Translator", version="1.0.3")
+app = FastAPI(title="Browser Translator", version="1.0.4")
 
 app.add_middleware(
     CORSMiddleware,
