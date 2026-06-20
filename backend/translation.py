@@ -6,7 +6,7 @@ import urllib.error
 import logging
 from typing import Optional
 
-from .config import OLLAMA_URL, TRANSLATION_MODEL
+from .config import OLLAMA_URL, TRANSLATION_MODEL, TRANSLATION_MODEL_CHAIN
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,11 @@ Rules:
 - Keep the same paragraph structure"""
 
 
-def translate(text: str, source_lang: str = "auto", target_lang: str = "vi") -> Optional[str]:
-    """Translate text using Ollama Qwen3.5 model."""
+def translate(text: str, source_lang: str = "auto", target_lang: str = "vi", model: str = None) -> Optional[str]:
+    """Translate text using Ollama Qwen3.5 model.
+
+    Tries the model chain in order — picks the first model that responds.
+    """
     if not text or not text.strip():
         return ""
 
@@ -41,42 +44,65 @@ def translate(text: str, source_lang: str = "auto", target_lang: str = "vi") -> 
 
     user_prompt = f"Translate from {source_name} to {target_name}:\n\n{text.strip()}"
 
-    payload = {
-        "model": TRANSLATION_MODEL,
-        "prompt": user_prompt,
-        "system": TRANSLATION_SYSTEM_PROMPT,
-        "stream": False,
-        "think": False,  # Qwen3.5: disable "thinking" chain to avoid wasting output tokens on translation
-        "options": {
-            "temperature": 0.1,
-            "top_p": 0.9,
-            "num_predict": 512,
+    # Try models in order: explicit override → configured chain.
+    # An explicit user model is tried first; if it fails we fall through to the chain.
+    candidates = []
+    if model and model not in TRANSLATION_MODEL_CHAIN:
+        candidates.append(model)
+    candidates.extend([c for c in TRANSLATION_MODEL_CHAIN if c])
+    last_error = None
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        payload = {
+            "model": candidate,
+            "prompt": user_prompt,
+            "system": TRANSLATION_SYSTEM_PROMPT,
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0.1,
+                "top_p": 0.9,
+                "num_predict": 512,
+            }
         }
-    }
 
-    req_data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/generate",
-        data=req_data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+        req_data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"{OLLAMA_URL}/api/generate",
+            data=req_data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
 
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            translated = result.get("response", "").strip()
-            logger.debug("Translation: %r → %r", text[:50], translated[:50])
-            return translated
-    except urllib.error.HTTPError as e:
-        logger.error("Ollama HTTP error: %s %s", e.code, e.read().decode())
-        return None
-    except urllib.error.URLError as e:
-        logger.error("Ollama connection error: %s", e.reason)
-        return None
-    except Exception as e:
-        logger.exception("Translation error: %s", e)
-        return None
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                translated = result.get("response", "").strip()
+                if translated:
+                    logger.debug("Translation [%s]: %r → %r", candidate, text[:50], translated[:50])
+                    return translated
+            # Model responded but with empty result — try next
+            continue
+        except urllib.error.HTTPError as e:
+            code = e.code
+            body = e.read().decode()
+            logger.warning("Model %s HTTP %s: %s", candidate, code, body[:200])
+            if code != 404:  # 404 = model not pulled, skip to next
+                last_error = f"HTTP {code}: {body[:100]}"
+            continue
+        except urllib.error.URLError as e:
+            logger.error("Ollama connection error: %s", e.reason)
+            return None  # Connection down entirely — no point retrying
+        except Exception as e:
+            logger.warning("Model %s failed: %s", candidate, e)
+            last_error = str(e)
+            continue
+
+    # All models exhausted
+    logger.error("All translation models failed. Last error: %s", last_error)
+    return None
 
 
 def detect_language(text: str) -> str:

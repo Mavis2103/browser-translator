@@ -4,7 +4,13 @@ import logging
 from typing import Optional, Callable
 import numpy as np
 
-from .config import SAMPLE_RATE, SILENCE_THRESHOLD, SILENCE_DURATION
+from .config import (
+    SAMPLE_RATE,
+    SILENCE_THRESHOLD,
+    SILENCE_DURATION,
+    MIN_FLUSH_DURATION,
+    MAX_BUFFER_DURATION,
+)
 from .translation import translate
 
 logger = logging.getLogger(__name__)
@@ -18,10 +24,13 @@ class AudioPipeline:
         self.tts_engine = None
         self._loaded = False
 
-        # Audio buffer for accumulating incoming chunks
+        # Buffer / silence tracking — flush on natural pause rather than fixed window.
         self.audio_buffer = bytearray()
         self.buffer_duration = 0  # seconds of audio buffered
-        self.last_voice_activity = 0  # timestamp of last voice activity
+        self.last_voice_activity = 0  # running duration when voice energy last crossed threshold
+        self.silence_start: Optional[float] = None  # running duration when silence began
+        self.flushing = False  # guard against re-entrant flush
+        self.last_seq = 0  # last audio chunk sequence number for dedup
 
         # Callbacks
         self.on_transcription: Optional[Callable] = None
@@ -31,6 +40,7 @@ class AudioPipeline:
         # Settings
         self.source_lang = "auto"
         self.target_lang = "vi"
+        self.translation_model = "qwen3.5:4b"  # may be overridden via set_language
 
     def load_models(self):
         """Load Moonshine STT and TTS models."""
@@ -71,9 +81,28 @@ class AudioPipeline:
         self._loaded = True
 
     def process_audio_chunk(self, chunk_data: bytes):
-        """Process an incoming audio chunk from WebSocket."""
-        # Decode opus/webm to PCM if needed
-        pcm_data = self._decode_audio_chunk(chunk_data)
+        """Process an incoming audio chunk from WebSocket.
+
+        Chunk format (from extension): 4-byte big-endian sequence number + payload.
+        Duplicate or out-of-order chunks (seq ≤ last_seq) are dropped silently.
+        """
+        if self.flushing:
+            return  # drop while a flush is in progress
+
+        # Strip 4-byte big-endian sequence prefix
+        if len(chunk_data) >= 4:
+            import struct
+            seq = struct.unpack(">I", chunk_data[:4])[0]
+            payload = chunk_data[4:]
+            if seq <= self.last_seq:
+                logger.debug("Dropping duplicate audio chunk seq=%d (last=%d)", seq, self.last_seq)
+                return
+            self.last_seq = seq
+        else:
+            payload = chunk_data  # no prefix — legacy/raw PCM
+
+        # Decode webm/opus to PCM if needed
+        pcm_data = self._decode_audio_chunk(payload)
         if pcm_data is None:
             return
 
@@ -81,14 +110,31 @@ class AudioPipeline:
         duration = len(pcm_data) / (SAMPLE_RATE * 2)  # 16-bit = 2 bytes per sample
         self.buffer_duration += duration
 
-        # Check for voice activity
+        # Detect voice activity via short-time energy
         audio_array = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
-        energy = np.sqrt(np.mean(audio_array ** 2))
+        if audio_array.size:
+            energy = float(np.sqrt(np.mean(audio_array ** 2)))
+        else:
+            energy = 0.0
+
         if energy > SILENCE_THRESHOLD:
             self.last_voice_activity = self.buffer_duration
+            self.silence_start = None
+        elif self.silence_start is None:
+            self.silence_start = self.buffer_duration
 
-        # Process when we have enough audio
-        if self.buffer_duration >= 5.0:  # Every 5 seconds
+        # Flush triggers (evaluated in priority order):
+        #  A) Max buffer reached (cheap hard cap, prevents unbounded growth)
+        #  B) Natural pause: SILENCE_DURATION of silence after at least one voice event
+        #  C) Min viable window: at least MIN_FLUSH_DURATION buffered
+        if self.buffer_duration >= MAX_BUFFER_DURATION:
+            self._process_buffer()
+        elif (
+            self.silence_start is not None
+            and self.last_voice_activity > 0
+            and (self.buffer_duration - self.silence_start) >= SILENCE_DURATION
+            and self.buffer_duration >= MIN_FLUSH_DURATION
+        ):
             self._process_buffer()
 
     def _decode_audio_chunk(self, chunk_data: bytes) -> Optional[bytes]:
@@ -110,15 +156,23 @@ class AudioPipeline:
 
     def _process_buffer(self):
         """Transcribe buffered audio, translate it, and generate TTS."""
+        if self.flushing:
+            return
         if len(self.audio_buffer) < SAMPLE_RATE * 2:  # Need at least 1 second
             return
 
         if not self._loaded:
             return
 
+        # Guard: drop frames with no detected speech (no voice activity recorded)
+        if self.last_voice_activity <= 0 or self.last_voice_activity >= self.buffer_duration:
+            # No spoken content in the buffered window — keep waiting
+            return
+
         # Convert buffer to numpy array
         audio_array = np.frombuffer(self.audio_buffer, dtype=np.int16).astype(np.float32) / 32768.0
 
+        self.flushing = True
         try:
             # STT
             logger.debug("Transcribing %d samples...", len(audio_array))
@@ -143,7 +197,7 @@ class AudioPipeline:
                 self.on_transcription(text)
 
             # Translate
-            translated = translate(text, self.source_lang, self.target_lang)
+            translated = translate(text, self.source_lang, self.target_lang, model=self.translation_model)
             if translated:
                 logger.info("Translated: %s", translated[:100])
                 if self.on_translation:
@@ -155,6 +209,8 @@ class AudioPipeline:
 
         except Exception as e:
             logger.exception("Audio processing error: %s", e)
+        finally:
+            self.flushing = False
 
         # Reset buffer for next segment
         self._reset_buffer()
@@ -162,6 +218,9 @@ class AudioPipeline:
     def _reset_buffer(self):
         self.audio_buffer = bytearray()
         self.buffer_duration = 0
+        self.last_voice_activity = 0
+        self.silence_start = None
+        self.last_seq = 0
 
     def _generate_tts(self, text: str):
         """Generate TTS audio from translated text."""
@@ -190,7 +249,9 @@ class AudioPipeline:
         except Exception as e:
             logger.exception("TTS generation failed: %s", e)
 
-    def set_language(self, source: str, target: str):
+    def set_language(self, source: str, target: str, model: str = None):
         self.source_lang = source
         self.target_lang = target
-        logger.info("Language set: %s → %s", source, target)
+        if model:
+            self.translation_model = model
+        logger.info("Language set: %s → %s (model: %s)", source, target, self.translation_model)

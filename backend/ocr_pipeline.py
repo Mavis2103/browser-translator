@@ -23,6 +23,7 @@ class OcrPipeline:
         # Settings
         self.source_lang = "auto"
         self.target_lang = "vi"
+        self.translation_model = "qwen3.5:4b"
 
     def load_models(self):
         """Load PaddleOCR model."""
@@ -152,7 +153,7 @@ class OcrPipeline:
             # Translate
             translated = None
             if full_text.strip():
-                translated = translate(full_text, self.source_lang, self.target_lang)
+                translated = translate(full_text, self.source_lang, self.target_lang, model=self.translation_model)
 
             return {
                 "success": True,
@@ -172,6 +173,8 @@ class OcrPipeline:
             except OSError:
                 pass
 
-    def set_language(self, source: str, target: str):
+    def set_language(self, source: str, target: str, model: str = None):
         self.source_lang = source
         self.target_lang = target
+        if model:
+            self.translation_model = model

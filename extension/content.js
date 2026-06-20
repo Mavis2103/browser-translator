@@ -19,8 +19,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       break;
 
-    case 'toggle_overlay':
-      toggleOverlay();
+    case 'show_ocr_result':
+      // Show OCR result as a floating panel on the page
+      showOcrPanel(msg.original, msg.translated);
       break;
   }
 });
@@ -124,3 +125,70 @@ document.addEventListener('keydown', (e) => {
     overlayVisible = false;
   }
 });
+
+// ========== OCR Result Panel ==========
+
+function showOcrPanel(original, translated) {
+  // Escape HTML to prevent injection
+  function esc(s) {
+    if (!s) return '';
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+  // Remove existing panel if present
+  const existing = document.getElementById('bt-ocr-panel');
+  if (existing) existing.remove();
+
+  const panel = document.createElement('div');
+  panel.id = 'bt-ocr-panel';
+  panel.style.cssText = `
+    position: fixed;
+    top: 60px;
+    right: 16px;
+    z-index: 2147483647;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    padding: 0;
+    border-radius: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    max-width: 420px;
+    max-height: 70vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    border: 1px solid #2a2a4a;
+  `;
+
+  panel.innerHTML = `
+    <div style="padding:8px 12px;background:#2a2a4a;border-radius:8px 8px 0 0;font-weight:600;display:flex;justify-content:space-between;align-items:center;">
+      <span>📄 OCR Translation</span>
+      <span id="bt-ocr-close" style="cursor:pointer;opacity:0.6;font-size:16px;">✕</span>
+    </div>
+    <div style="padding:8px 12px;border-bottom:1px solid #2a2a4a;color:#aaa;">
+      <div style="font-size:11px;color:#666;margin-bottom:2px;">Original</div>
+      <div>${esc(original).slice(0, 2000)}</div>
+    </div>
+    <div style="padding:8px 12px;color:#4fc3f7;">
+      <div style="font-size:11px;color:#666;margin-bottom:2px;">Translation</div>
+      <div>${esc(translated).slice(0, 2000)}</div>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+
+  // Close handler
+  document.getElementById('bt-ocr-close').addEventListener('click', () => {
+    panel.remove();
+  });
+
+  // Esc to close
+  const escHandler = (e) => {
+    if (e.key === 'Escape' && document.getElementById('bt-ocr-panel')) {
+      panel.remove();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+}

@@ -44,6 +44,14 @@
           </select>
         </div>
       </div>
+      <div class="model-row">
+        <label>Translation Model</label>
+        <select id="model-select">
+          <option value="qwen3.5:1.5b">⚡ Fast (1.5B) — ~2GB RAM</option>
+          <option value="qwen3.5:4b" selected>⚖️ Balanced (4B) — ~4GB RAM</option>
+          <option value="qwen3.5:8b">🎯 Quality (8B) — ~6GB RAM</option>
+        </select>
+      </div>
     </div>
 
     <!-- Audio Translation Tab -->
@@ -74,10 +82,16 @@
       <button id="btn-clear-results" class="btn btn-small" style="margin-top:6px">Clear</button>
     </div>
 
-    <!-- Footer -->
+    <!-- Footer with model status -->
+    <div class="health-row" id="health-row" style="display:none;">
+      <div class="health-item" id="health-stt" title="Speech-to-Text">🎤 <span class="hl-blank">...</span></div>
+      <div class="health-item" id="health-tts" title="Text-to-Speech">🔊 <span class="hl-blank">...</span></div>
+      <div class="health-item" id="health-ocr" title="OCR">📷 <span class="hl-blank">...</span></div>
+      <div class="health-item" id="health-llm" title="Translation Model">🧠 <span class="hl-blank">...</span></div>
+    </div>
     <div class="footer">
       <span>Backend: <span id="backend-status">disconnected</span></span>
-      <span class="version">v1.0.1</span>
+      <span class="version">v1.0.2</span>
     </div>
   </div>
 

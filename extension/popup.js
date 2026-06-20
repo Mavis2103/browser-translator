@@ -20,6 +20,7 @@ const btnClearResults = $('btn-clear-results');
 const resultsPanel = $('results-panel');
 const sourceLang = $('source-lang');
 const targetLang = $('target-lang');
+const modelSelect = $('model-select');
 const swapBtn = $('swap-langs');
 
 // ========== State Updates ==========
@@ -92,7 +93,8 @@ btnStartAudio.addEventListener('click', async () => {
   const resp = await chrome.runtime.sendMessage({
     action: 'start_capture',
     sourceLang: sourceLang.value,
-    targetLang: targetLang.value
+    targetLang: targetLang.value,
+    translationModel: modelSelect.value
   });
 
   if (resp?.success) {
@@ -113,23 +115,54 @@ btnStopAudio.addEventListener('click', async () => {
 });
 
 btnOcr.addEventListener('click', async () => {
-  ocrStatus.textContent = '⏳ Processing OCR...';
+  ocrStatus.textContent = '⏳ Capturing page screenshot...';
   ocrStatus.className = 'status-text active';
 
-  // First set language
-  await chrome.runtime.sendMessage({
-    action: 'set_language',
-    sourceLang: sourceLang.value,
-    targetLang: targetLang.value
-  });
+  try {
+    // Capture screenshot browser-side via chrome.tabs
+    const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+    const base64 = dataUrl.split(',')[1];
 
-  const resp = await chrome.runtime.sendMessage({ action: 'ocr_capture' });
+    ocrStatus.textContent = '⏳ Running OCR...';
+    ocrStatus.className = 'status-text active';
 
-  if (resp?.success) {
-    ocrStatus.textContent = '✅ OCR complete';
-    ocrStatus.className = 'status-text success';
-  } else {
-    ocrStatus.textContent = '❌ Failed: ' + (resp?.error || 'connection refused');
+    // Send directly to backend (no CDP round-trip)
+    const resp = await fetch('http://localhost:8765/api/ocr/image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: base64,
+        sourceLang: sourceLang.value,
+        targetLang: targetLang.value
+      })
+    });
+    const result = await resp.json();
+
+    if (result.success) {
+      ocrStatus.textContent = '✅ OCR complete';
+      ocrStatus.className = 'status-text success';
+      addResult('ocr',
+        '📄 <span class="lang-tag">OCR Translation</span><br>' +
+        `<div class="orig-text">${escapeHtml(result.texts || '')}</div>` +
+        `<div class="trans-text">${escapeHtml(result.translated || '')}</div>`
+      );
+
+      // Send overlay data to content script for on-page display
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'show_ocr_result',
+            original: result.texts,
+            translated: result.translated
+          }).catch(() => { /* content script not ready */ });
+        }
+      });
+    } else {
+      ocrStatus.textContent = '❌ Failed: ' + (result.error || 'unknown');
+      ocrStatus.className = 'status-text error';
+    }
+  } catch (e) {
+    ocrStatus.textContent = '❌ Error: ' + e.message;
     ocrStatus.className = 'status-text error';
   }
 });
@@ -142,7 +175,8 @@ swapBtn.addEventListener('click', () => {
   chrome.runtime.sendMessage({
     action: 'set_language',
     sourceLang: sourceLang.value,
-    targetLang: targetLang.value
+    targetLang: targetLang.value,
+    translationModel: modelSelect.value
   });
 });
 
@@ -150,7 +184,8 @@ sourceLang.addEventListener('change', () => {
   chrome.runtime.sendMessage({
     action: 'set_language',
     sourceLang: sourceLang.value,
-    targetLang: targetLang.value
+    targetLang: targetLang.value,
+    translationModel: modelSelect.value
   });
 });
 
@@ -158,7 +193,17 @@ targetLang.addEventListener('change', () => {
   chrome.runtime.sendMessage({
     action: 'set_language',
     sourceLang: sourceLang.value,
-    targetLang: targetLang.value
+    targetLang: targetLang.value,
+    translationModel: modelSelect.value
+  });
+});
+
+modelSelect.addEventListener('change', () => {
+  chrome.runtime.sendMessage({
+    action: 'set_language',
+    sourceLang: sourceLang.value,
+    targetLang: targetLang.value,
+    translationModel: modelSelect.value
   });
 });
 
@@ -191,7 +236,61 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// ========== Health Polling ==========
+
+let healthInterval = null;
+
+async function pollHealth() {
+  try {
+    const resp = await fetch('http://localhost:8765/api/health');
+    const data = await resp.json();
+    const healthRow = document.getElementById('health-row');
+    if (!healthRow) return;
+
+    if (data.status === 'ok') {
+      healthRow.style.display = 'flex';
+      updateHealth('health-stt', data.models?.stt);
+      updateHealth('health-tts', data.models?.tts);
+      updateHealth('health-ocr', data.models?.ocr);
+      updateHealthLabel('health-llm', data.models?.translation || '?');
+    } else {
+      healthRow.style.display = 'none';
+    }
+  } catch {
+    const hr = document.getElementById('health-row');
+    if (hr) hr.style.display = 'none';
+  }
+}
+
+function updateHealth(id, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const span = el.querySelector('span');
+  if (ok) {
+    span.textContent = 'ok';
+    span.className = 'hl-ok';
+  } else if (ok === false) {
+    span.textContent = 'fail';
+    span.className = 'hl-fail';
+  } else {
+    span.textContent = '...';
+    span.className = 'hl-blank';
+  }
+}
+
+function updateHealthLabel(id, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const span = el.querySelector('span');
+  span.textContent = label || '?';
+  span.className = label ? 'hl-ok' : 'hl-blank';
+}
+
 // ========== Init ==========
+
+// Start health polling
+healthInterval = setInterval(pollHealth, 5000);
+pollHealth(); // immediate first poll
 
 // Request initial state
 chrome.runtime.sendMessage({ action: 'get_state' }, (resp) => {

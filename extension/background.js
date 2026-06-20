@@ -10,6 +10,8 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let isCapturing = false;
 let capturedStream = null;
+let chunkSeq = 0;
+let lastSentSeq = 0;
 
 // ========== WebSocket connection ==========
 
@@ -121,7 +123,7 @@ function handleBackendMessage(data) {
 
 // ========== Audio Capture (tabCapture) ==========
 
-async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi') {
+async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', translationModel = 'qwen3.5:4b') {
   if (isCapturing) {
     console.warn('[BT] Already capturing audio');
     return { success: false, error: 'Already capturing' };
@@ -148,6 +150,7 @@ async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi') {
       type: 'start_capture',
       sourceLang: sourceLang,
       targetLang: targetLang,
+      translationModel: translationModel,
       tabTitle: tabs[0].title || '',
       tabUrl: tabs[0].url || ''
     }));
@@ -161,11 +164,19 @@ async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi') {
     };
 
     recordedChunks = [];
+    chunkSeq = 0;
+    lastSentSeq = 0;
     mediaRecorder = new MediaRecorder(capturedStream, options);
 
     mediaRecorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) {
-        sendToBackend(event.data);
+        chunkSeq++;
+        // Prefix binary data with 4-byte big-endian sequence number for dedup
+        const seqPrefix = new ArrayBuffer(4);
+        new DataView(seqPrefix).setUint32(0, chunkSeq, false);
+        const combined = new Blob([seqPrefix, event.data], { type: 'application/octet-stream' });
+        sendToBackend(combined);
+        lastSentSeq = chunkSeq;
       }
     };
 
@@ -293,7 +304,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case 'start_capture':
-      startAudioCapture(msg.sourceLang, msg.targetLang).then(sendResponse);
+      startAudioCapture(msg.sourceLang, msg.targetLang, msg.translationModel).then(sendResponse);
       return true;
 
     case 'stop_capture':

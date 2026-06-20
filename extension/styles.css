@@ -128,6 +128,36 @@ body {
   background: #1a4a7a;
 }
 
+/* Model Row */
+.model-row {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.model-row label {
+  font-size: 11px;
+  color: #8888aa;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.model-row select {
+  padding: 6px 8px;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  background: #0f3460;
+  color: #e0e0e0;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+
+.model-row select:focus {
+  border-color: #4a6cf7;
+}
+
 /* Buttons */
 .btn-row {
   display: flex;
@@ -283,7 +313,7 @@ body {
   font-weight: 500;
 }
 
-/* Footer */
+/* Footer with model health */
 .footer {
   display: flex;
   justify-content: space-between;
@@ -292,6 +322,24 @@ body {
   color: #555577;
   border-top: 1px solid #2a2a4a;
 }
+
+.health-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  font-size: 11px;
+  color: #8888aa;
+}
+
+.health-item {
+  white-space: nowrap;
+}
+
+.health-item .hl-ok { color: #81c784; }
+.health-item .hl-fail { color: #e57373; }
+.health-item .hl-blank { color: #555577; }
 
 .version {
   color: #444466;

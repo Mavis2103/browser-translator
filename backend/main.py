@@ -34,7 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger("browser-translator")
 
 # Create FastAPI app
-app = FastAPI(title="Browser Translator", version="1.0.0")
+app = FastAPI(title="Browser Translator", version="1.0.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,6 +61,11 @@ class OcrCaptureRequest(BaseModel):
     sourceLang: str = "auto"
     targetLang: str = "vi"
     fullPage: bool = True
+
+class OcrCaptureByImageRequest(BaseModel):
+    sourceLang: str = "auto"
+    targetLang: str = "vi"
+    image: str  # base64-encoded PNG
 
 class OcrCaptureResponse(BaseModel):
     success: bool
@@ -196,7 +201,8 @@ async def websocket_audio(websocket: WebSocket):
                         elif msg["type"] == "set_language":
                             audio_pipeline.set_language(
                                 msg.get("sourceLang", "auto"),
-                                msg.get("targetLang", "vi")
+                                msg.get("targetLang", "vi"),
+                                model=msg.get("translationModel", None),
                             )
                     except json.JSONDecodeError:
                         pass
@@ -235,7 +241,10 @@ async def ocr_capture(request: OcrCaptureRequest):
         logger.error("CDP screenshot capture failed")
         return OcrCaptureResponse(
             success=False,
-            error="Failed to capture screenshot. Is CDP browser running on port 9222?"
+            error=(
+                "Failed to capture screenshot via CDP. "
+                "Use the 'Capture Page' button (browser-side) instead."
+            )
         )
 
     logger.debug("Screenshot captured, running OCR...")
@@ -248,14 +257,43 @@ async def ocr_capture(request: OcrCaptureRequest):
     )
 
 
+@app.post("/api/ocr/image", response_model=OcrCaptureResponse)
+async def ocr_image(request: OcrCaptureByImageRequest):
+    """Run OCR + translation on a base64-encoded image (captured browser-side)."""
+    logger.info("OCR image requested: %s → %s", request.sourceLang, request.targetLang)
+
+    ocr_pipeline.source_lang = request.sourceLang
+    ocr_pipeline.target_lang = request.targetLang
+
+    try:
+        import base64
+        img_bytes = base64.b64decode(request.image)
+    except Exception as e:
+        return OcrCaptureResponse(success=False, error=f"Invalid base64 image: {e}")
+
+    result = await ocr_pipeline.process_screenshot(img_bytes)
+    return OcrCaptureResponse(
+        success=result.get("success", False),
+        texts=result.get("texts", ""),
+        translated=result.get("translated", ""),
+        error=result.get("error", ""),
+    )
+
+
 @app.get("/api/health")
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint with model status."""
     return {
         "status": "ok",
         "audio_capturing": any(c["capturing"] for c in active_audio_clients.values()),
         "audio_clients": len(active_audio_clients),
-        "llm_available": True,  # We'll know during startup
+        "models": {
+            "stt": audio_pipeline.stt_model is not None if audio_pipeline else False,
+            "tts": audio_pipeline.tts_engine is not None if audio_pipeline else False,
+            "ocr": ocr_pipeline.ocr_reader is not None if ocr_pipeline else False,
+            "translation": audio_pipeline.translation_model if audio_pipeline else "unknown",
+        },
+        "ollama_available": True,
     }
 
 
