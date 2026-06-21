@@ -34,7 +34,6 @@ class AudioPipeline:
         # Pending audio captured during flushes — merged into main buffer on reset.
         # Prevents lost-sentence bug when translate() takes longer than 1 buffer.
         self._pending_pcm = bytearray()
-        self._pending_dur = 0.0
 
         # Callbacks
         self.on_transcription: Optional[Callable] = None
@@ -143,9 +142,11 @@ class AudioPipeline:
             return
 
         if self.flushing:
-            # Buffer for next flush — DO NOT drop
-            self._pending_pcm.extend(pcm_data)
-            self._pending_dur += len(pcm_data) / (SAMPLE_RATE * 2)
+            # Buffer for next flush — DO NOT drop. Cap at MAX_BUFFER_DURATION
+            # to prevent OOM on slow translate() calls (e.g. network timeout).
+            max_pending = int(MAX_BUFFER_DURATION * SAMPLE_RATE * 2)  # 30 s
+            if len(self._pending_pcm) < max_pending:
+                self._pending_pcm.extend(pcm_data)
             return
 
         self.audio_buffer.extend(pcm_data)
@@ -263,10 +264,11 @@ class AudioPipeline:
         except Exception as e:
             logger.exception("Audio processing error: %s", e)
         finally:
+            # Reset buffer BEFORE unlocking flushing — otherwise a race
+            # between capture thread's process_audio_chunk() and our
+            # _reset_buffer() can lose the first audio of the next segment.
+            self._reset_buffer()
             self.flushing = False
-
-        # Reset buffer for next segment
-        self._reset_buffer()
 
     def _reset_buffer(self):
         """Reset main buffer for next segment. Merges any audio captured
@@ -282,7 +284,6 @@ class AudioPipeline:
             n = len(self._pending_pcm)
             self.audio_buffer.extend(self._pending_pcm)
             self._pending_pcm = bytearray()
-            self._pending_dur = 0.0
             self.buffer_duration = n / (SAMPLE_RATE * 2)
             # Vue voice activity snapshot — re-evaluate caller side via VAD
             logger.debug("Merged %d pending bytes (%.2fs) into fresh buffer",
