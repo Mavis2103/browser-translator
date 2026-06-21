@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.5.1] - 2026-06-21
+
+### Fixed
+- **`install-deps` verify section** — fixed false alarm where `piper_tts` was tested (`✗ NOT FOUND`). Package `piper-tts` on PyPI imports as `piper`. Also added `moonshine_voice.tts` check for the actual TTS provider.
+
 ## [v1.0.5] - 2026-06-21
 
 ### Added

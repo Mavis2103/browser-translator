@@ -344,7 +344,8 @@ def cmd_install_deps(args):
         ("fastapi", "✓ fastapi"),
         ("uvicorn", "✓ uvicorn"),
         ("moonshine_voice", "✓ moonshine_voice"),
-        ("piper_tts", "✓ piper-tts"),
+        ("moonshine_voice.tts", "✓ moonshine TTS"),
+        ("piper", "✓ piper-tts (pip name)"),  # package 'piper-tts' imports as 'piper'
         ("pydub", "✓ pydub"),
         ("aiohttp", "✓ aiohttp"),
     ]:
