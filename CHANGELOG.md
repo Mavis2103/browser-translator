@@ -2,10 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v1.0.5.1] - 2026-06-21
+## [v1.0.6] - 2026-06-21
 
 ### Fixed
-- **`install-deps` verify section** — fixed false alarm where `piper_tts` was tested (`✗ NOT FOUND`). Package `piper-tts` on PyPI imports as `piper`. Also added `moonshine_voice.tts` check for the actual TTS provider.
+- **`install-deps` pydub false alarm** — pydub 0.25.1 emits `SyntaxWarning` on Python 3.13. Broadened the import test's `except ImportError` to `except Exception` so the real error shows, and pinned `pydub>=0.25,<0.26`.
+- **`install-deps` sudo handling** — was using `sudo apt-get` which requires a TTY. Switched to `sudo -n` (non-interactive) and added `try/except` so the script continues with a warning instead of crashing half-way, even when passwordless sudo isn't configured.
+- **`browser-translator version`** — added subcommand to print current version.
 
 ## [v1.0.5] - 2026-06-21
 

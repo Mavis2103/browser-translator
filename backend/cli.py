@@ -294,17 +294,24 @@ def cmd_build_ext(args):
 
 
 def cmd_install_deps(args):
-    """Install system + Python dependencies."""
+    print()
     print("=== System packages ===")
     if shutil.which("apt-get"):
         sys_pkgs = ["ffmpeg", "zstd", "curl"]
-        print(f"Installing: {' '.join(sys_pkgs)}")
-        subprocess.check_call(
-            ["sudo", "apt-get", "update", "-qq"],
-        )
-        subprocess.check_call(
-            ["sudo", "apt-get", "install", "-y", "-qq"] + sys_pkgs,
-        )
+        print(f"  Installing: {' '.join(sys_pkgs)}")
+        try:
+            subprocess.check_call(
+                ["sudo", "-n", "apt-get", "update", "-qq"],
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("  ! sudo failed (no tty or no password).")
+            print("    Run manually: sudo apt-get install -y ffmpeg zstd curl")
+        try:
+            subprocess.check_call(
+                ["sudo", "-n", "apt-get", "install", "-y", "-qq"] + sys_pkgs,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("  ! Continuing without sudo — system packages may be missing")
     else:
         print("(apt-get not found. Ensure ffmpeg is installed manually.)")
 
@@ -352,8 +359,9 @@ def cmd_install_deps(args):
         try:
             __import__(mod)
             print(f"  {name}")
-        except ImportError:
-            print(f"  ✗ {name} — NOT FOUND")
+        except Exception as e:
+            # Catch ImportError + subclass issues (e.g. pydub SyntaxWarnings on 3.13)
+            print(f"  ✗ {name} — {type(e).__name__}: {e}")
     try:
         from paddleocr import PaddleOCR
         print("  ✓ paddleocr (optional)")
@@ -407,8 +415,11 @@ def main(argv=None):
     p_status.add_argument("--host", default="0.0.0.0")
     p_status.add_argument("--port", type=int, default=8765)
 
-    # build-ext
+    # Optional: build-ext
     sub.add_parser("build-ext", help="Package Chrome extension as .zip")
+
+    # version
+    sub.add_parser("version", help="Print version and exit")
 
     # install-deps
     sub.add_parser("install-deps", help="Install system + Python deps")
@@ -425,6 +436,10 @@ def main(argv=None):
         return cmd_build_ext(args)
     elif args.command == "install-deps":
         return cmd_install_deps(args)
+    elif args.command == "version":
+        from backend import __version__
+        print(f"browser-translator v{__version__}")
+        return 0
     return 1
 
 
