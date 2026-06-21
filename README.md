@@ -2,6 +2,94 @@
 
 Local AI-powered tool for **speech-to-speech translation** and **OCR page translation** in the browser. Runs entirely on CPU — no GPU needed.
 
+## Features
+
+- **🎤 Speech-to-Speech Translation** — Captures tab audio via `chrome.tabCapture`, transcribes with Moonshine tiny-vi, translates with Qwen3.5, speaks back with Piper TTS
+- **📄 OCR Page Translation** — Captures page screenshots, extracts text with PaddleOCR PP-OCRv6, translates via Qwen3.5
+- **🔒 100% Local** — No data leaves your machine
+- **🌐 Multi-language** — Vietnamese, English, Japanese, Korean, Chinese, Thai, Indonesian
+
+## Requirements
+
+| Resource   | Minimum                     | Recommended             |
+| ---------- | --------------------------- | ----------------------- |
+| RAM        | 8GB (with Qwen3.5 0.8B)    | 16GB                    |
+| CPU        | Any x86_64                  | 4+ cores                |
+| OS         | Linux                       | Ubuntu 24.04+           |
+| Browser    | Google Chrome 120+          | Chrome 149+             |
+| Disk       | 6GB free                    | 15GB+                   |
+
+## Quick Start (on a new machine)
+
+```bash
+# 1. Clone
+git clone https://github.com/Mavis2103/browser-translator.git
+cd browser-translator
+
+# 2. Install as a global tool (pins deps + makes `browser-translator` available everywhere)
+uv tool install -e .
+
+# 3. Install system + Python deps
+browser-translator install-deps
+
+# 4. Start Ollama (if not already running)
+ollama serve &
+
+# 5. Start the backend
+browser-translator start
+#   → Ctrl+C to stop
+#   → Or: browser-translator start --daemon  (background, use `stop` to kill)
+```
+
+```
+# Load extension in Chrome
+chrome://extensions  →  Developer mode  →  Load unpacked
+Select: browser-translator/extension/
+```
+
+Then click the 🌐 icon in the Chrome toolbar to open the control panel.
+
+## Managing the Backend
+
+The `browser-translator` CLI is your single entry point:
+
+```
+browser-translator start          # Foreground (Ctrl+C to stop)
+browser-translator start --daemon # Background daemon
+browser-translator stop           # Stop daemonized backend
+browser-translator status         # Health check + model status
+browser-translator build-ext      # Package extension as .zip
+browser-translator install-deps   # Install all deps (fresh machine)
+```
+
+### `browser-translator start`
+
+- Auto-detects Ollama (checks PATH, then `~/.local/bin`, `/usr/local/bin`, `/usr/bin`)
+- Derives `OLLAMA_LIBRARY_PATH` from the binary location when needed
+- Starts the FastAPI backend on port 8765
+- No Chrome auto-launch — you load the extension manually
+
+### `browser-translator build-ext`
+
+Packages `extension/` into `dist/browser-translator-extension-v1.0.4.zip` for distribution:
+
+```bash
+browser-translator build-ext
+# → dist/browser-translator-extension-v1.0.4.zip (ready to share)
+```
+
+### `browser-translator status`
+
+```
+✓ Backend: ok
+  URL:   http://0.0.0.0:8765
+  Audio: idle
+  STT:   ✓ Moonshine
+  TTS:   ✓ Moonshine
+  OCR:   ✗ not loaded
+  LLM:   qwen3.5:0.8b
+```
+
 ## Architecture
 
 ```
@@ -12,7 +100,7 @@ Local AI-powered tool for **speech-to-speech translation** and **OCR page transl
 │  │→ audio   │  │  → overlays    │    │
 │  └────┬─────┘  └──────┬─────────┘    │
 │       │               │              │
-│   WebSocket           CDP/HTTP       │
+│   WebSocket           HTTP           │
 └───────┼───────────────┼──────────────┘
         │               │
 ┌───────┼───────────────┼──────────────┐
@@ -24,69 +112,27 @@ Local AI-powered tool for **speech-to-speech translation** and **OCR page transl
 │  │ → Piper    │  │  → response  │    │
 │  └────────────┘  └──────────────┘    │
 │        │                             │
-│  Ollama (Qwen3.5 4B) ← localhost     │
+│  Ollama (Qwen3.5) ← localhost:11434  │
 └──────────────────────────────────────┘
 ```
 
-## Features
+## Components
 
-- **🎤 Speech-to-Speech Translation** — Captures tab audio via `chrome.tabCapture`, transcribes with Moonshine tiny-vi, translates with Qwen3.5, and speaks back with Piper TTS (Vietnamese voice)
-- **📄 OCR Page Translation** — Takes full-page screenshots via CDP, extracts text with PaddleOCR PP-OCRv6, translates via Qwen3.5
-- **🔒 100% Local** — No data leaves your machine
-- **🌐 Multi-language** — Vietnamese, English, Japanese, Korean, Chinese, Thai, Indonesian
+| Component        | Model / Tool               | Size   | RAM      |
+| ---------------- | -------------------------- | ------ | -------- |
+| Speech-to-Text   | Moonshine tiny-vi          | 26 MB  | ~100 MB  |
+| Text-to-Speech   | Piper vi_VN                | 50 MB  | ~100 MB  |
+| OCR              | PaddleOCR PP-OCRv6 tiny    | 3 MB   | <100 MB  |
+| Translation      | Qwen3.5 0.8B via Ollama    | ~1 GB  | ~1.3 GB  |
+| Fallback chain   | Qwen3.5 1.5B / 4B          | ~5 GB  | ~4 GB    |
 
-## Requirements
+### Optional: OCR Support
 
-| Resource | Minimum | Recommended |
-|----------|---------|-------------|
-| RAM | 8GB (with Qwen3.5 4B) | 16GB |
-| CPU | Any x86_64 | 4+ cores |
-| OS | Linux | Ubuntu 24.04+ |
-| Browser | Google Chrome 120+ | Chrome 149+ |
-| Disk | 8GB free | 15GB+ |
-
-## Quick Start
-
-### 1. First-time Install (run once)
+OCR requires `paddleocr` and `paddlepaddle` (CPU):
 
 ```bash
-git clone https://github.com/Mavis2103/browser-translator.git
-cd browser-translator
-./scripts/install.sh
-```
-
-This installs:
-- System packages: `ffmpeg`, `zstd`, `curl`
-- Python deps via `uv`
-- Ollama (auto-downloads if missing) at `~/.local/bin/ollama`
-- `qwen3.5:0.8b` translation model (~1.0GB; chain falls back to 1.5b → 4b → 8b)
-
-### 2. Run
-
-```bash
-# Open a separate terminal for Ollama (if install.sh didn't start it):
-OLLAMA_LIBRARY_PATH=$HOME/.local/lib/ollama ollama serve
-
-# Start the tool:
-./scripts/start.sh
-
-# To stop:
-./scripts/stop.sh
-```
-
-The script auto-launches Chrome with the extension loaded. Open the 🌐 icon from the toolbar.
-
-## Manual Start
-
-```bash
-# Terminal 1: Ollama
-ollama serve
-
-# Terminal 2: Python backend
-uvicorn backend.main:app --host 0.0.0.0 --port 8765
-
-# Terminal 3: Chrome with extension
-google-chrome --remote-debugging-port=9222 --load-extension=./extension
+pip install paddleocr paddlepaddle
+# Or: uv pip install browser-translator[ocr]
 ```
 
 ## Project Structure
@@ -94,35 +140,67 @@ google-chrome --remote-debugging-port=9222 --load-extension=./extension
 ```
 browser-translator/
 ├── extension/              # Chrome Extension (MV3)
-│   ├── manifest.json       # Extension manifest
+│   ├── manifest.json
 │   ├── background.js       # Service worker (tabCapture, WebSocket)
-│   ├── popup.html          # Control panel
-│   ├── popup.js            # Popup logic
+│   ├── popup.html          # Control panel UI
+│   ├── popup.js
 │   ├── content.js          # Content script (overlays, toasts)
-│   ├── content.css         # Overlay styles
-│   ├── styles.css          # Popup styles
-│   └── icons/              # Extension icons
-├── backend/                # Python Backend
+│   ├── content.css
+│   ├── styles.css
+│   └── icons/
+├── backend/                # Python Backend (package)
+│   ├── __init__.py         # ← now a proper package
+│   ├── cli.py              # uv tool entry point (browser-translator)
 │   ├── main.py             # FastAPI server (WebSocket + HTTP)
-│   ├── audio_pipeline.py   # STT → Translation → TTS pipeline
+│   ├── config.py           # Configuration (env-var driven)
+│   ├── audio_pipeline.py   # STT → Translation → TTS
 │   ├── ocr_pipeline.py     # Screenshot → OCR → Translation
-│   ├── translation.py      # Ollama translation client
-│   └── config.py           # Configuration
+│   └── translation.py      # Ollama translation client
 ├── scripts/
-│   ├── start.sh            # Start everything
-│   └── launch_chrome.sh    # Launch Chrome with extension
+│   ├── start.sh            # Legacy: auto-start backend + Chrome (w/ extension)
+│   └── install.sh          # Legacy: first-time setup
+├── pyproject.toml           # ← NEW: uv tool / pip install support
 ├── requirements.txt
 ├── README.md
 └── CHANGELOG.md
 ```
 
+## Env vars (all optional)
+
+| Variable                | Default                    | Description                     |
+| ----------------------- | -------------------------- | ------------------------------- |
+| `OLLAMA_URL`            | `http://localhost:11434`   | Ollama endpoint                 |
+| `TRANSLATION_MODEL`     | `qwen3.5:0.8b`            | Primary translation model       |
+| `TRANSLATION_MODEL_CHAIN` | `qwen3.5:0.8b,qwen3.5:1.5b` | Fallback chain            |
+| `CDP_URL`               | `http://localhost:9222`    | Chrome DevTools Protocol        |
+| `SERVER_HOST`           | `0.0.0.0`                 | Backend bind address            |
+| `SERVER_PORT`           | `8765`                    | Backend port                    |
+| `STT_MODEL`             | `tiny-vi`                 | Moonshine STT model name        |
+| `PIPER_VOICE`           | `vi_VN`                   | Piper voice locale              |
+| `OLLAMA_BIN`            | auto-detected             | Override Ollama binary path     |
+| `OLLAMA_LIBRARY_PATH`   | auto-detected             | Override Ollama lib path        |
+
+> **OLLAMA_LIBRARY_PATH**: Only needed when Ollama was installed from the GitHub tarball (not the official installer). The CLI and shell scripts auto-detect this from the binary location. You should not need to set it manually.
+
+## Legacy mode (shell scripts)
+
+The `.sh` scripts are kept as fallback but the `browser-translator` CLI is preferred.
+
+```bash
+# One-time setup
+./scripts/install.sh
+
+# Start everything (incl. Chrome auto-launch)
+./scripts/start.sh
+```
+
 ## Technical Notes
 
-- **Audio**: Chrome's `tabCapture` API captures only the audio from the active tab. For system-wide audio, use PipeWire monitor source instead.
-- **STT**: Moonshine tiny-vi (26MB model) handles Vietnamese speech recognition on CPU in realtime.
-- **TTS**: Piper with vi_VN voice generates natural Vietnamese speech.
-- **OCR**: PaddleOCR PP-OCRv6 tiny (3MB) provides fast CPU inference via OpenVINO.
-- **Translation**: Qwen3.5 4B runs locally via Ollama at ~2-5s per translation on i5 CPU.
+- **Audio**: Chrome's `tabCapture` captures only the active tab. For system-wide audio, use PipeWire monitor.
+- **STT**: Moonshine tiny-vi (26 MB) handles Vietnamese speech on CPU in realtime.
+- **TTS**: Piper vi_VN generates natural Vietnamese speech.
+- **OCR**: PaddleOCR PP-OCRv6 tiny (3 MB) via OpenVINO on CPU.
+- **Translation**: Qwen3.5 0.8B runs locally via Ollama at ~2-5s on i5 CPU.
 
 ## License
 

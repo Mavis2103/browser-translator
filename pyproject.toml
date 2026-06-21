@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "browser-translator"
+version = "1.0.4"
+description = "Local AI-powered speech-to-speech translation & OCR page translation"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Mavis", email = "taquanvku@gmail.com" },
+]
+requires-python = ">=3.10"
+keywords = ["translation", "ai", "local", "speech", "ocr", "browser"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "uvicorn>=0.27",
+    "fastapi>=0.100",
+    "pydantic>=2.0",
+    "moonshine-voice>=0.0.62",
+    "piper-tts>=1.2.0",
+    "pydub>=0.25",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+ocr = [
+    "paddleocr>=3.7",
+    "paddlepaddle>=3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Mavis2103/browser-translator"
+Repository = "https://github.com/Mavis2103/browser-translator"
+
+[project.scripts]
+browser-translator = "backend.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[tool.setuptools.package-data]
+backend = ["py.typed"]

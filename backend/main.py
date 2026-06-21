@@ -10,11 +10,7 @@ import asyncio
 import json
 import logging
 import os
-import sys
 from pathlib import Path
-
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
