@@ -7,6 +7,7 @@ Provides:
 """
 
 import asyncio
+from dataclasses import dataclass, asdict
 import json
 import logging
 import os
@@ -101,6 +102,17 @@ async def startup():
 
     # Set up callbacks for audio pipeline
     audio_pipeline.on_transcription = lambda text: None  # handled by WebSocket connection
+
+    # ---- System-level audio capture (optional, --system flag) ----
+    try:
+        system_audio = getattr(app.state, "system_audio", False)
+    except Exception:
+        system_audio = False
+    if system_audio:
+        from backend.audio_system import start_system_audio
+        ok = start_system_audio(audio_pipeline)
+        logger.info("System audio capture: %s", "OK" if ok else "FAILED (need portaudio19-dev)")
+    # --------------------------------------------------------------
 
     logger.info("Backend ready on ws://%s:%s", SERVER_HOST, SERVER_PORT)
 
@@ -236,6 +248,51 @@ async def websocket_audio(websocket: WebSocket):
         active_audio_clients.pop(client_id, None)
         if not active_audio_clients:
             audio_pipeline._reset_buffer()
+
+
+# ========== System Audio Control ==========
+
+@dataclass
+class SystemAudioStatus:
+    running: bool = False
+    backend: str = ""
+
+
+@dataclass
+class SystemAudioToggle:
+    action: str  # "start" | "stop"
+
+
+@app.post("/api/audio/system", response_model=SystemAudioStatus)
+async def system_audio_toggle(request: SystemAudioToggle):
+    """Start or stop system-level audio capture (non-extension mode)."""
+    from backend.audio_system import start_system_audio, stop_system_audio
+    from backend.audio_system import _capture, _playback, get_backend
+
+    if request.action == "start":
+        ok = start_system_audio(audio_pipeline)
+        if not ok:
+            return SystemAudioStatus(running=False, backend="disabled (portaudio?")
+    elif request.action == "stop":
+        stop_system_audio()
+
+    backend = get_backend()
+    return SystemAudioStatus(
+        running=_capture is not None and _capture.is_alive(),
+        backend=backend.name,
+    )
+
+
+@app.get("/api/audio/system", response_model=SystemAudioStatus)
+async def system_audio_status():
+    """Return system-level audio status."""
+    from backend.audio_system import _capture, _playback, get_backend
+
+    backend = get_backend()
+    return SystemAudioStatus(
+        running=_capture is not None and _capture.is_alive(),
+        backend=backend.name,
+    )
 
 
 # ========== HTTP: OCR ==========

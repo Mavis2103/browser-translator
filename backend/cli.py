@@ -134,6 +134,10 @@ def cmd_start(args):
         import uvicorn
         from backend.main import app
 
+        if args.system:
+            app.state.system_audio = True
+            print("  System audio capture: enabled")
+
         uvicorn.run(
             app,
             host=args.host,
@@ -406,6 +410,8 @@ def main(argv=None):
                          help="Run in background (use 'stop' to kill)")
     p_start.add_argument("--reload", action="store_true",
                          help="Auto-reload on code changes (dev only)")
+    p_start.add_argument("--system", action="store_true",
+                         help="Capture system audio (bypass extension — PipeWire/PA loopback)")
 
     # stop
     sub.add_parser("stop", help="Stop the daemonized backend")

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.0] - 2026-06-21
+
+### Added
+- **System-level audio capture (`--system` flag)** — capture browser/system audio directly from the PipeWire/PulseAudio monitor source, bypassing the browser extension. New `backend/audio_system.py` module: PortAudio-based loopback capture + TTS playback. CLI: `browser-translator start --system`. HTTP API: `POST/GET /api/audio/system`. Automatic backend detection (PipeWire/PulseAudio/ALSA). Uses `sounddevice` for low-latency capture. 16kHz mono Int16 (no WebM/Opus). TTS plays to speakers via background output stream. Optional webrtcvad gate (falls back to energy-based silence detection).
+
 ## [v1.0.13] - 2026-06-21
 
 ### Fixed
@@ -164,3 +169,18 @@ All notable changes to this project will be documented in this file.
 [unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.0.1...HEAD
 [v1.0.1]: https://github.com/Mavis2103/browser-translator/compare/v1.0.0...v1.0.1
 [v1.0.0]: https://github.com/Mavis2103/browser-translator/releases/tag/v1.0.0
+
+## [v1.1.0] - 2026-06-21
+
+### Added
+- **System-level audio capture (--system flag)** — capture browser/system audio directly from
+  PipeWire/PulseAudio monitor source, bypassing the browser extension entirely.
+  - New module `backend/audio_system.py`: PortAudio-based loopback capture + TTS playback.
+  - New CLI flag: `browser-translator start --system`.
+  - New HTTP API: `POST/GET /api/audio/system` for runtime start/stop/toggle.
+  - Automatically detects PipeWire vs PulseAudio vs ALSA.
+  - Uses `sounddevice` (PortAudio) for low-latency capture; falls back gracefully if
+    libportaudio is missing.
+  - 16kHz mono Int16 directly (no WebM/Opus encoding needed).
+  - TTS played directly to speakers via a background output stream.
+  - webrtcvad gate (optional; falls back to energy-based silence detection).
