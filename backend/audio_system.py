@@ -268,16 +268,15 @@ class SystemCapture:
 
     # ----- internals: parec (PulseAudio/pipewire-pulse) -----
 
-    def _run_parec(self):
-        """Capture loop via ``parec`` subprocess — zero native Python deps."""
+    def _start_parec(self) -> Optional["subprocess.Popen"]:
+        """Spawn parec subprocess. Called on startup and on EOF/restart."""
         _backend = get_backend()
         monitor = _backend.monitor_source
         if not monitor:
-            logger.error("No monitor source found — cannot start parec capture")
-            return
-
+            logger.error("No monitor source — cannot start parec")
+            return None
         try:
-            self._proc = subprocess.Popen(
+            proc = subprocess.Popen(
                 [
                     "parec",
                     "-d", monitor,
@@ -291,25 +290,50 @@ class SystemCapture:
                 stderr=subprocess.DEVNULL,
                 bufsize=0,
             )
-            assert self._proc.stdout is not None
-            logger.debug("Capture: parec started (monitor=%s)", monitor)
+            assert proc.stdout is not None
+            logger.debug("parec spawned (monitor=%s)", monitor)
+            return proc
+        except Exception as e:
+            logger.error("Failed to start parec: %s", e)
+            return None
+
+    def _run_parec(self):
+        """Capture loop via ``parec`` subprocess — zero native Python deps."""
+        _backend = get_backend()
+        monitor = _backend.monitor_source
+        if not monitor:
+            logger.error("No monitor source found — cannot start parec capture")
+            return
+
+        try:
+            self._proc = self._start_parec()
 
             block_size = BLOCK_SAMPLES * 2  # 3200 bytes = 1600 × int16
+            buf = bytearray()
             while not self._stop.is_set():
-                chunk = self._proc.stdout.read(block_size)
-                if not chunk or len(chunk) < block_size:
+                chunk = self._proc.stdout.read(8192)
+                if not chunk:
                     if self._stop.is_set():
                         break
-                    logger.warning("parec returned short read (%d bytes)", len(chunk) if chunk else 0)
-                    time.sleep(0.05)
+                    # EOF without stop: parec died unexpectedly
+                    logger.warning("parec pipe closed (EOF) — restarting...")
+                    self._proc.stdout.close()
+                    self._proc = self._start_parec()
+                    if self._proc is None:
+                        break
                     continue
-                if self._vad_fn is not None:
-                    try:
-                        if not self._vad_fn(chunk):
-                            continue
-                    except Exception:
-                        pass
-                self._emit(chunk)
+                buf.extend(chunk)
+                # Emit complete blocks
+                while len(buf) >= block_size:
+                    block = bytes(buf[:block_size])
+                    del buf[:block_size]
+                    if self._vad_fn is not None:
+                        try:
+                            if not self._vad_fn(block):
+                                continue
+                        except Exception:
+                            pass
+                    self._emit(block)
 
         except Exception:
             logger.exception("System capture (parec) failed")

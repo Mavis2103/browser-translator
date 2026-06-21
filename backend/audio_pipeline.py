@@ -276,9 +276,15 @@ class AudioPipeline:
                 logger.debug("TTS produced no samples")
                 return
 
-            # Convert float [-1,1] to int16 PCM
+            # Convert float [-1,1] to int16 PCM, boosting volume ~1.6x
             import base64
-            pcm_ints = (np.array(samples) * 32767).astype(np.int16)
+            samples_arr = np.array(samples, dtype=np.float64)
+            # Normalize peak to 0.99 then amplify to fill int16 range
+            peak = float(np.max(np.abs(samples_arr)))
+            norm_target = 0.95  # leave headroom to avoid clipping
+            scale = norm_target / max(peak, 0.001)  # 0.001 prevents div-by-zero
+            pcm_ints = (samples_arr * 32767 * min(scale, 2.0)).astype(np.int16)
+            pcm_ints = np.clip(pcm_ints, -32768, 32767).astype(np.int16)
             pcm_data = pcm_ints.tobytes()
             b64_data = base64.b64encode(pcm_data).decode("ascii")
 
