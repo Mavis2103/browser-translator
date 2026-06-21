@@ -31,6 +31,10 @@ class AudioPipeline:
         self.silence_start: Optional[float] = None  # running duration when silence began
         self.flushing = False  # guard against re-entrant flush
         self.last_seq = 0  # last audio chunk sequence number for dedup
+        # Pending audio captured during flushes — merged into main buffer on reset.
+        # Prevents lost-sentence bug when translate() takes longer than 1 buffer.
+        self._pending_pcm = bytearray()
+        self._pending_pending_dur = 0.0
 
         # Callbacks
         self.on_transcription: Optional[Callable] = None
@@ -112,25 +116,36 @@ class AudioPipeline:
 
         Chunk format (from extension): 4-byte big-endian sequence number + payload.
         Duplicate or out-of-order chunks (seq ≤ last_seq) are dropped silently.
-        """
-        if self.flushing:
-            return  # drop while a flush is in progress
 
+        Audio arriving WHILE a flush is in progress is *buffered into a
+        pending queue* instead of being dropped. When the flush finishes,
+        pending audio is merged into the main buffer for the next flush.
+        This prevents losing sentences that arrive during slow
+        translate() + TTS cycles (qwen3.5:0.8b can take 1-3 s per call).
+        """
         # Strip 4-byte big-endian sequence prefix
         if len(chunk_data) >= 4:
             import struct
             seq = struct.unpack(">I", chunk_data[:4])[0]
             payload = chunk_data[4:]
-            if seq <= self.last_seq:
+            # Allow later packets to OVERWRITE last_seq after a flush reset
+            if not self.flushing and seq <= self.last_seq:
                 logger.debug("Dropping duplicate audio chunk seq=%d (last=%d)", seq, self.last_seq)
                 return
-            self.last_seq = seq
+            if not self.flushing:
+                self.last_seq = seq
         else:
             payload = chunk_data  # no prefix — legacy/raw PCM
 
         # Decode webm/opus to PCM if needed
         pcm_data = self._decode_audio_chunk(payload)
         if pcm_data is None:
+            return
+
+        if self.flushing:
+            # Buffer for next flush — DO NOT drop
+            self._pending_pcm.extend(pcm_data)
+            self._pending_pending_dur += len(pcm_data) / (SAMPLE_RATE * 2)
             return
 
         self.audio_buffer.extend(pcm_data)
@@ -256,11 +271,24 @@ class AudioPipeline:
         self._reset_buffer()
 
     def _reset_buffer(self):
+        """Reset main buffer for next segment. Merges any audio captured
+        during the flush (translate/TTS) into the new buffer so we don't
+        lose intermediate sentences."""
         self.audio_buffer = bytearray()
         self.buffer_duration = 0
         self.last_voice_activity = 0
         self.silence_start = None
         self.last_seq = 0
+        # Merge pending audio
+        if self._pending_pcm:
+            n = len(self._pending_pcm)
+            self.audio_buffer.extend(self._pending_pcm)
+            self._pending_pcm = bytearray()
+            self._pending_pending_dur = 0.0
+            self.buffer_duration = n / (SAMPLE_RATE * 2)
+            # Vue voice activity snapshot — re-evaluate caller side via VAD
+            logger.debug("Merged %d pending bytes (%.2fs) into fresh buffer",
+                         n, self.buffer_duration)
 
     def _generate_tts(self, text: str):
         """Generate TTS audio from translated text."""
@@ -276,16 +304,49 @@ class AudioPipeline:
                 logger.debug("TTS produced no samples")
                 return
 
-            # Convert float [-1,1] to int16 PCM, boosting volume ~1.6x
+            # Convert float [-1,1] to int16 PCM with careful gain staging.
+            # The moonshine_voice wrapper feeds piper VoC samples through a
+            # 22050→24000 resampler which *quietens* peaks. We restore level
+            # but only TRIM silence/quiet regions to avoid amplifying the
+            # noise floor into clipping. RMS-based gain control is more
+            # robust than naive peak normalisation on TTS with long silences.
             import base64
             samples_arr = np.array(samples, dtype=np.float64)
-            # Normalize peak to 0.99 then amplify to fill int16 range
-            peak = float(np.max(np.abs(samples_arr)))
-            norm_target = 0.95  # leave headroom to avoid clipping
-            scale = norm_target / max(peak, 0.001)  # 0.001 prevents div-by-zero
-            pcm_ints = (samples_arr * 32767 * min(scale, 2.0)).astype(np.int16)
-            pcm_ints = np.clip(pcm_ints, -32768, 32767).astype(np.int16)
-            pcm_data = pcm_ints.tobytes()
+            if samples_arr.size == 0:
+                return
+            # Compute root-mean-square level of the SP signal using top-half
+            # energy (mask out the lowest 40 % per sample magnitude to skip
+            # silence tails or DC noise).
+            abs_s = np.abs(samples_arr)
+            floor = float(np.percentile(abs_s, 40))
+            mask = abs_s > floor
+            if mask.sum() > 0:
+                speech_peak = float(abs_s[mask].max())
+                speech_rms = float(np.sqrt((samples_arr[mask] ** 2).mean()))
+            else:
+                speech_peak = float(abs_s.max())
+                speech_rms = max(speech_peak, 0.05)
+            # Target: speech peak at ~0.95 of int16 range; clamp gain to
+            # at most 4x so quiet voices still come up but never blow out.
+            target_peak = 0.95
+            needed_gain = target_peak / max(speech_peak, 0.02)
+            gain = min(needed_gain, 4.0)
+            # Final sanity: ensure boosted RMS is in a comfortable range
+            # (post-gain RMS in [-30 dB, -6 dB] ≈ [-0.03, 0.5] int16-normalized).
+            post_rms = speech_rms * gain
+            if post_rms < 0.04:  # too quiet — boost harder (capped at 6x)
+                gain = min(0.04 / max(speech_rms, 0.005), 6.0)
+            if post_rms > 0.5:  # too hot — pull down
+                gain = 0.5 / speech_rms
+            # A tiny short fade-in / fade-out (5 ms) at clip boundary
+            # eliminates pops on the first/last samples.
+            fade_n = min(int(0.005 * sample_rate), len(samples_arr) // 4)
+            if fade_n > 0:
+                ramp = np.linspace(0.0, 1.0, fade_n)
+                samples_arr[:fade_n] *= ramp
+                samples_arr[-fade_n:] *= ramp[::-1]
+            int16 = np.clip(samples_arr * gain * 32767, -32768, 32767).astype(np.int16)
+            pcm_data = int16.tobytes()
             b64_data = base64.b64encode(pcm_data).decode("ascii")
 
             if self.on_tts_audio:
