@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.13] - 2026-06-21
+
+### Fixed
+- **No TTS audio output** — `playTranslatedAudio()` was instantiated from the service worker's `handleBackendMessage('tts_audio')`. Service workers have no DOM, so `AudioContext` constructor silently failed (or never existed) and no audio was scheduled. Moved TTS playback to `offscreen.js` (which is a DOM context with full WebAudio support) and split the offscreen-doc WS `onmessage` switch so only `tts_audio` plays locally; the rest (`translation`, `transcription`, `ocr_result`, `status`, `error`) is forwarded to the service worker for popup/content-script routing.
+
 ## [v1.0.12] - 2026-06-21
 
 ### Fixed
