@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.1] - 2026-06-21
+
+### Fixed
+- **sounddevice PortAudio library not found** — `sounddevice`'s CFFI extension failed to `dlopen(libportaudio)` on some installs (pure-Python wheel has no prebuilt `.so` for Linux). Replaced unconditional sounddevice dependency with **dual-backend architecture**:
+  - sounddevice (PortAudio) — preferred, used when compiled extension is available
+  - **parec/paplay** (PulseAudio CLI tools) — zero Python native deps, works with PipeWire-pulse and PulseAudio out of the box. `pulseaudio-utils` ships with all major distros.
+  - System capture and playback each auto-select the best available backend.
+  - Graceful log: shows install hints for both backends when neither is available.
+
 ## [v1.1.0] - 2026-06-21
 
 ### Added

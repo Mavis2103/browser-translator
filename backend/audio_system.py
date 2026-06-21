@@ -6,16 +6,17 @@ the default sink.
 
 Design
 ------
-Producers/consumers live in dedicated daemon threads so the FastAPI event
-loop is never blocked. Audio flows are passed to the existing
-`AudioPipeline` instance — exactly the same STT/translate/TTS path as the
-WebSocket-driven capture used by the extension.
+Two backends are supported, tried in order:
+
+1. **sounddevice** (preferred) — CFFI binding to PortAudio, works on any
+   setup with libportaudio (ALSA, PipeWire, PulseAudio, JACK, etc.).
+2. **parec/paplay** (fallback) — PulseAudio CLI tools, zero Python native
+   deps. Works on PipeWire-pulse and PulseAudio systems.
 
 Capture
 -------
-- Opens a PortAudio input stream on the PipeWire/PulseAudio monitor source
-  of the default sink (`PipeWire expose this transparently through the
-  PulseAudio host API`).
+- Opens a capture stream on the PipeWire/PulseAudio monitor source of the
+  default sink.
 - Force 16 kHz mono int16 directly — PipeWire resamples on the way in, so
   the JS extension's brittle JSON-format conversion is bypassed.
 - 100 ms blocks (1600 frames) → low end-to-end latency.
@@ -35,6 +36,7 @@ import logging.config
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -46,21 +48,29 @@ import numpy as np
 
 logger = logging.getLogger("browser-translator.audio_system")
 
-# Late import — sounddevice requires libportaudio (acked to be installed
-# on the target machine in v1.1.0). We guard the import so that the rest of
-# the backend still starts even if the system lib is missing (e.g. CI).
+# ---------------------------------------------------------------------------
+# Backend detection
+# ---------------------------------------------------------------------------
+
+# 1) sounddevice (CFFI → libportaudio)
 try:
     import sounddevice as sd  # type: ignore
-
     _SOUNDDEVICE_OK = True
 except Exception as _sd_err:
     sd = None  # type: ignore
     _SOUNDDEVICE_OK = False
-    logger.warning("sounddevice import failed: %s — system capture disabled", _sd_err)
+    logger.debug("sounddevice unavailable: %s", _sd_err)
 
+# 2) PulseAudio CLI tools (fallback — zero native deps)
+_HAS_PAREC = shutil.which("parec") is not None
+_HAS_PAPLAY = shutil.which("paplay") is not None
+_HAS_PULSE_UTILS = _HAS_PAREC and _HAS_PAPLAY
+if not _HAS_PULSE_UTILS:
+    logger.debug("parec/paplay unavailable — pulse-utils fallback disabled")
+
+# 3) Optional VAD
 try:
     import webrtcvad  # type: ignore
-
     _WEBRTCVAD_OK = True
 except Exception:
     webrtcvad = None  # type: ignore
@@ -154,40 +164,62 @@ class SystemCapture:
     16-bit/16 kHz/mono PCM frames into the AudioPipeline.
 
     Designed for graceful shutdown: `stop()` waits for the stream to close
-    cleanly. Re-entrant start() requires explicit stop() first."""
+    cleanly. Re-entrant start() requires explicit stop() first.
+
+    Backends (tried in order):
+      1. sounddevice (PortAudio) — when libportaudio.so is available.
+      2. parec subprocess (PulseAudio/pipewire-pulse) — zero native deps.
+    """
 
     def __init__(self, audio_pipeline, vad=None):
         self._pipeline = audio_pipeline
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._proc: Optional[subprocess.Popen] = None
         self._vad_fn = make_vad() if vad is None else (make_vad() if vad is True else vad or None)
         self._block_idx = 0
+        self._backend = "none"
 
     # ----- public -----
 
     def start(self) -> bool:
-        """Start the capture thread. Returns False if sounddevice is missing
-        or an error occurs."""
+        """Start the capture thread. Returns False if no audio backend is
+        available."""
         if self.is_alive():
-            logger.warning("System capture already running")
+            logger.debug("System capture already running")
             return True
-        if not _SOUNDDEVICE_OK:
+        if not _SOUNDDEVICE_OK and not _HAS_PULSE_UTILS:
             logger.warning(
-                "Cannot start system capture: sounddevice / libportaudio missing.\n"
-                "  Install: sudo apt install -y portaudio19-dev"
+                "Cannot start system capture: no audio backend available.\n"
+                "  Options:\n"
+                "    sudo apt install -y portaudio19-dev   (for sounddevice)\n"
+                "    sudo apt install -y pulseaudio-utils   (for parec fallback)"
             )
             return False
         self._stop.clear()
         self._block_idx = 0
         self._thread = threading.Thread(
-            target=self._run, name="bt-system-capture", daemon=True
+            target=self._run if _SOUNDDEVICE_OK else self._run_parec,
+            name="bt-system-capture",
+            daemon=True,
         )
         self._thread.start()
-        logger.info("System capture started")
+        self._backend = "sounddevice" if _SOUNDDEVICE_OK else "parec"
+        logger.info("System capture started (backend: %s)", self._backend)
         return True
 
     def stop(self, timeout: float = 2.0):
         self._stop.set()
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=3)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
         if self._thread is not None:
             self._thread.join(timeout=timeout)
         self._thread = None
@@ -196,14 +228,14 @@ class SystemCapture:
     def is_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    # ----- internals -----
+    def backend(self) -> str:
+        return self._backend
+
+    # ----- internals: sounddevice -----
 
     def _run(self):
         stream = None
         try:
-            # PortAudio input: default monitor source, 16 kHz mono int16
-            # The PA/PipeWire host APIs both expose the monitor device at
-            # default index when no explicit `device=` is given.
             stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
@@ -212,38 +244,91 @@ class SystemCapture:
                 latency="low",
             )
             stream.start()
-            logger.debug("Capture: stream opened; reading 16kHz mono int16")
+            logger.debug("Capture: PortAudio stream opened")
             while not self._stop.is_set():
                 frames, overflowed = stream.read(BLOCK_SAMPLES)
                 if overflowed:
                     logger.debug("input overflowed — caller likely slow")
-                # `frames` is shape (BLOCK_SAMPLES, 1) int16 → flat bytes
                 pcm_bytes = frames.astype(np.int16).tobytes()
-
-                # Optional VAD gate
                 if self._vad_fn is not None:
                     try:
                         if not self._vad_fn(pcm_bytes):
                             continue
                     except Exception:
-                        # webrtcvad is strict about frame size; fall back to energy path
                         pass
-
-                self._block_idx += 1
-                # Hand to pipeline (the same code path the WebSocket uses).
-                # Sequence number is required for dup detection — make a 4-byte
-                # Big-Endian prefix identical to the extension's format.
-                import struct
-                prefix = struct.pack(">I", self._block_idx)
-                self._pipeline.process_audio_chunk(prefix + pcm_bytes)
+                self._emit(pcm_bytes)
         except Exception:
-            logger.exception("System capture failed")
+            logger.exception("System capture (sounddevice) failed")
         finally:
             try:
                 if stream is not None:
                     stream.stop(); stream.close()
             except Exception:
                 pass
+
+    # ----- internals: parec (PulseAudio/pipewire-pulse) -----
+
+    def _run_parec(self):
+        """Capture loop via ``parec`` subprocess — zero native Python deps."""
+        _backend = get_backend()
+        monitor = _backend.monitor_source
+        if not monitor:
+            logger.error("No monitor source found — cannot start parec capture")
+            return
+
+        try:
+            self._proc = subprocess.Popen(
+                [
+                    "parec",
+                    "-d", monitor,
+                    "--raw",
+                    "--format=s16le",
+                    f"--rate={SAMPLE_RATE}",
+                    f"--channels={CHANNELS}",
+                    "--latency-msec=100",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+            assert self._proc.stdout is not None
+            logger.debug("Capture: parec started (monitor=%s)", monitor)
+
+            block_size = BLOCK_SAMPLES * 2  # 3200 bytes = 1600 × int16
+            while not self._stop.is_set():
+                chunk = self._proc.stdout.read(block_size)
+                if not chunk or len(chunk) < block_size:
+                    if self._stop.is_set():
+                        break
+                    logger.warning("parec returned short read (%d bytes)", len(chunk) if chunk else 0)
+                    time.sleep(0.05)
+                    continue
+                if self._vad_fn is not None:
+                    try:
+                        if not self._vad_fn(chunk):
+                            continue
+                    except Exception:
+                        pass
+                self._emit(chunk)
+
+        except Exception:
+            logger.exception("System capture (parec) failed")
+        finally:
+            if self._proc is not None:
+                try:
+                    self._proc.terminate()
+                    self._proc.wait(timeout=2)
+                except Exception:
+                    pass
+                self._proc = None
+
+    # ----- shared emit -----
+
+    def _emit(self, pcm_bytes: bytes):
+        self._block_idx += 1
+        import struct
+        prefix = struct.pack(">I", self._block_idx)
+        self._pipeline.process_audio_chunk(prefix + pcm_bytes)
 
 
 # ========== System playback (translated TTS to speakers) ==========
@@ -253,16 +338,25 @@ class SystemPlayback:
     """Plays translated audio out to the default sink. The single output
     stream is reused across segments. `play_pcm_int16(...)` is non-blocking
     — the call returns when the data has been queued; a worker thread writes
-    to the PortAudio output stream at its own pace."""
+    to the PortAudio output stream at its own pace.
+
+    Backends (tried in order):
+      1. sounddevice (PortAudio) — when libportaudio.so is available.
+      2. paplay subprocess (PulseAudio/pipewire-pulse) — zero native deps.
+    """
 
     def __init__(self, queue_size: int = 32):
-        self._ready = _SOUNDDEVICE_OK
+        self._use_sd = _SOUNDDEVICE_OK
+        self._use_pa = not _SOUNDDEVICE_OK and _HAS_PULSE_UTILS
+        self._ready = _SOUNDDEVICE_OK or _HAS_PULSE_UTILS
         self._out_stream = None
+        self._pa_proc: Optional[subprocess.Popen] = None
+        self._pa_rate = 0  # current paplay sample rate
         self._lock = threading.Lock()
         self._q: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=queue_size)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._backend_name = ""  # filled at start()
+        self._backend_name = "sounddevice" if _SOUNDDEVICE_OK else ("paplay" if _HAS_PULSE_UTILS else "none")
 
     # ----- public -----
 
@@ -273,20 +367,23 @@ class SystemPlayback:
             return True
         self._stop.clear()
 
-        try:
-            # Lazy-create output stream with a sample rate chosen at runtime
-            # (we close + reopen whenever the incoming sample rate differs).
-            self._open_output_stream(sr=22050)
-        except Exception as e:
-            logger.warning("Output stream open failed: %s", e)
-            self._ready = False
-            return False
+        if self._use_sd:
+            try:
+                self._open_output_stream(sr=22050)
+            except Exception as e:
+                logger.warning("Output stream open failed: %s", e)
+                self._ready = False
+                return False
+
+        # paplay subprocess started lazily on first chunk (so we know sample rate)
 
         self._thread = threading.Thread(
-            target=self._pump, name="bt-system-playback", daemon=True
+            target=self._pump,
+            name="bt-system-playback",
+            daemon=True,
         )
         self._thread.start()
-        logger.info("System playback ready (default sink)")
+        logger.info("System playback ready (backend: %s)", self._backend_name)
         return True
 
     def stop(self, timeout: float = 2.0):
@@ -299,6 +396,7 @@ class SystemPlayback:
                 try: self._out_stream.stop(); self._out_stream.close()
                 except Exception: pass
                 self._out_stream = None
+            self._stop_paplay()
         logger.info("System playback stopped")
 
     def is_alive(self) -> bool:
@@ -311,11 +409,19 @@ class SystemPlayback:
             return
         if samples.ndim != 1:
             samples = samples.reshape(-1)
-        # Ensure output stream matches sample rate
-        with self._lock:
-            cur = self._out_stream
-            if cur is None or cur.samplerate != sample_rate:
-                self._reopen_output_stream(sample_rate)
+
+        if self._use_sd:
+            # Ensure output stream matches sample rate
+            with self._lock:
+                cur = self._out_stream
+                if cur is None or cur.samplerate != sample_rate:
+                    self._reopen_output_stream(sample_rate)
+        elif self._use_pa:
+            # Ensure paplay is running at the right sample rate
+            with self._lock:
+                if self._pa_proc is None or self._pa_rate != sample_rate:
+                    self._start_paplay(sample_rate)
+
         try:
             self._q.put_nowait(samples.astype(np.int16, copy=False).copy())
         except queue.Full:
@@ -330,7 +436,7 @@ class SystemPlayback:
         except Exception as e:
             logger.warning("play_base64_pcm decode failed: %s", e)
 
-    # ----- internals -----
+    # ----- internals: sounddevice -----
 
     def _open_output_stream(self, sr: int):
         with self._lock:
@@ -350,6 +456,46 @@ class SystemPlayback:
         # Caller holds _lock
         self._open_output_stream(sr)
 
+    # ----- internals: paplay -----
+
+    def _start_paplay(self, sr: int):
+        """Start (or restart) paplay at a given sample rate. Caller holds _lock."""
+        self._stop_paplay()
+        self._pa_proc = subprocess.Popen(
+            [
+                "paplay",
+                "--raw",
+                f"--rate={sr}",
+                "--format=s16le",
+                "--channels=1",
+                "--latency-msec=100",
+            ],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0,
+        )
+        self._pa_rate = sr
+        logger.debug("paplay started at %d Hz", sr)
+
+    def _stop_paplay(self):
+        if self._pa_proc is not None:
+            try:
+                self._pa_proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                self._pa_proc.terminate()
+                self._pa_proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self._pa_proc.kill()
+                except Exception:
+                    pass
+            self._pa_proc = None
+            self._pa_rate = 0
+
+    # ----- shared pump -----
+
     def _pump(self):
         while not self._stop.is_set():
             try:
@@ -357,25 +503,41 @@ class SystemPlayback:
             except queue.Empty:
                 continue
             try:
-                with self._lock:
-                    stream = self._out_stream
-                if stream is None:
-                    continue
-                # Write in small blocks so we can abort quickly on stop()
-                i = 0
-                while i < len(chunk):
-                    block = chunk[i:i + BLOCK_SAMPLES]
-                    if len(block) < BLOCK_SAMPLES:
-                        # Pad final block with zeros
-                        block = np.concatenate([
-                            block, np.zeros(BLOCK_SAMPLES - len(block), dtype=np.int16)
-                        ])
-                    if self._stop.is_set():
-                        break
-                    stream.write(block)
-                    i += BLOCK_SAMPLES
+                if self._use_sd:
+                    self._pump_sounddevice(chunk)
+                elif self._use_pa:
+                    self._pump_paplay(chunk)
             except Exception:
                 logger.exception("Playback pump error")
+
+    def _pump_sounddevice(self, chunk: np.ndarray):
+        with self._lock:
+            stream = self._out_stream
+        if stream is None:
+            return
+        i = 0
+        while i < len(chunk):
+            block = chunk[i:i + BLOCK_SAMPLES]
+            if len(block) < BLOCK_SAMPLES:
+                block = np.concatenate([
+                    block, np.zeros(BLOCK_SAMPLES - len(block), dtype=np.int16)
+                ])
+            if self._stop.is_set():
+                break
+            stream.write(block)
+            i += BLOCK_SAMPLES
+
+    def _pump_paplay(self, chunk: np.ndarray):
+        with self._lock:
+            proc = self._pa_proc
+        if proc is None or proc.stdin is None:
+            return
+        try:
+            proc.stdin.write(chunk.tobytes())
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            logger.warning("paplay pipe broken — stopping playback")
+            self._ready = False
 
 
 # ========== Module-level singletons ==========
