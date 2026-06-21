@@ -114,8 +114,9 @@ function handleBackendMessage(data) {
 
 // ========== Audio Capture (via Offscreen Document) ==========
 // Uses chrome.tabCapture.getMediaStreamId() + offscreen document for
-// MV3-compatible tab audio capture (works in Chrome, Brave, Edge).
-// See: https://developer.chrome.com/docs/extensions/reference/api/tabCapture
+// MV3-compatible tab audio capture. Auto-reconnects on WS drop.
+
+let captureConfig = null;  // remember settings for auto-reconnect { sourceLang, targetLang, translationModel }
 
 async function ensureOffscreenDocument() {
   const existing = await chrome.offscreen.hasDocument();
@@ -159,6 +160,9 @@ async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', transla
     return { success: false, error: 'Already capturing' };
   }
 
+  // Save config for auto-recovery
+  captureConfig = { sourceLang, targetLang, translationModel };
+
   try {
     // Get current tab
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -199,6 +203,8 @@ async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', transla
 async function stopAudioCapture() {
   if (!isCapturing) return { success: false, error: 'Not capturing' };
 
+  captureConfig = null;  // clear auto-recovery
+
   try {
     // Tell offscreen doc to stop
     await chrome.runtime.sendMessage({ action: 'stop_capture' });
@@ -232,6 +238,85 @@ async function capturePageForOcr() {
   } catch (e) {
     console.error('[BT] OCR capture failed:', e);
     return { success: false, error: e.message };
+  }
+}
+
+// ========== Keepalive — prevent Chrome from killing service worker ==========
+
+let keepaliveInterval = null;
+
+function startKeepalive() {
+  stopKeepalive();
+  // Use chrome.alarms to wake the SW every 20s (more reliable than setTimeout in MV3)
+  chrome.alarms.create('bt-keepalive', { periodInMinutes: 0.33 });
+}
+
+function stopKeepalive() {
+  try { chrome.alarms.clear('bt-keepalive'); } catch (e) { /* ignore */ }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'bt-keepalive') {
+    // Keep SW alive — no-op, just the alarm event wakes us
+    checkOffscreenHealth();
+  }
+});
+
+// ========== Offscreen Recovery ==========
+
+async function checkOffscreenHealth() {
+  // If we think we're capturing but offscreen is gone, recover
+  if (isCapturing && captureConfig) {
+    const hasDoc = await chrome.offscreen.hasDocument().catch(() => false);
+    if (!hasDoc) {
+      console.warn('[BT] Offscreen document missing during capture — recovering...');
+      recoverOffscreenCapture();
+    }
+  }
+}
+
+async function recoverOffscreenCapture() {
+  if (!captureConfig) return;
+  const { sourceLang, targetLang, translationModel } = captureConfig;
+
+  try {
+    // Close any stale offscreen doc
+    const hasDoc = await chrome.offscreen.hasDocument().catch(() => false);
+    if (hasDoc) {
+      await chrome.offscreen.closeDocument().catch(() => {});
+    }
+
+    // Get current tab
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs[0]) throw new Error('No active tab');
+
+    // Create fresh offscreen doc
+    await ensureOffscreenDocument();
+
+    // Get new stream ID
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      targetTabId: tabs[0].id
+    });
+
+    // Start capture with stored config
+    await chrome.runtime.sendMessage({
+      action: 'start_capture',
+      streamId: streamId,
+      sourceLang: sourceLang,
+      targetLang: targetLang,
+      translationModel: translationModel
+    });
+
+    offscreenCaptureTabId = tabs[0].id;
+    isCapturing = true;
+    broadcastState();
+    console.log('[BT] Offscreen capture recovered successfully');
+  } catch (e) {
+    console.error('[BT] Offscreen recovery failed:', e);
+    // Give up — user needs to click Start again
+    isCapturing = false;
+    captureConfig = null;
+    broadcastState();
   }
 }
 
@@ -277,6 +362,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         console.log('[BT] Offscreen WS closed, capture ended');
         isCapturing = false;
         offscreenCaptureTabId = null;
+        broadcastState();
+        return false;
+
+      case 'ws_dead':
+        // Offscreen's WS gave up reconnecting — recreate offscreen doc
+        console.warn('[BT] Offscreen WS dead, attempting recovery...');
+        if (captureConfig) {
+          recoverOffscreenCapture();
+        }
+        return false;
+
+      case 'capture_reconnected':
+        // Offscreen reconnected its WS and resumed
+        console.log('[BT] Offscreen capture reconnected');
+        isCapturing = true;
         broadcastState();
         return false;
 
@@ -335,13 +435,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // ========== Init ==========
 
-// Connect on install/startup
+// Create right-click context menu to hide/show translation panel
 chrome.runtime.onInstalled.addListener(() => {
   connectWebSocket();
+  startKeepalive();
+  chrome.contextMenus.create({
+    id: 'bt-toggle-panel',
+    title: 'Ẩn / Hiện bảng dịch (Browser Translator)',
+    contexts: ['page', 'selection', 'editable'],
+  });
 });
+
+// Handle context menu clicks
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'bt-toggle-panel' && tab?.id) {
+    chrome.tabs.sendMessage(tab.id, { type: 'toggle_panel' })
+      .catch(() => { /* content script may not be ready */ });
+  }
+});
+
 chrome.runtime.onStartup.addListener(() => {
   connectWebSocket();
+  startKeepalive();
 });
 
 // Attempt initial connection
 connectWebSocket();
+startKeepalive();

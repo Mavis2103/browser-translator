@@ -1,11 +1,11 @@
 // Browser Translator - Offscreen Document
 // Captures tab audio via getUserMedia + WebAudio API, streams raw PCM16 (16kHz mono)
-// to the backend WebSocket. Moonshine STT expects PCM Float32 — we send Int16 over the
-// wire and let the backend convert (np.frombuffer(..., dtype=np.int16)). This avoids
-// the pydub/pyaudioop decode path that's broken on Python 3.13.
+// to the backend WebSocket. Includes auto-reconnect on WS drop and keepalive pings.
 
 const BACKEND_URL = 'ws://localhost:8765/ws/audio';
 const SAMPLE_RATE = 16000;
+const KEEPALIVE_INTERVAL_MS = 10000; // ping every 10s to keep WS alive
+const MAX_RECONNECT_ATTEMPTS = 20;
 
 let ws = null;
 let audioContext = null;
@@ -13,12 +13,24 @@ let sourceNode = null;
 let processorNode = null;
 let capturedStream = null;
 let isCapturing = false;
+let isStopped = false;  // set true on user stop — skip reconnect
 let chunkSeq = 0;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+// Generation counter prevents stale ws.onclose/onopen handlers from
+// overwriting a newer connection when connectWs() races with a reconnect timer.
+let wsGen = 0;
+let keepaliveTimer = null;
 
 // ========== WebSocket connection ==========
 
 function connectWs(sourceLang, targetLang, translationModel) {
+  const gen = ++wsGen;
   return new Promise((resolve, reject) => {
+    if (ws) {
+      try { ws.close(); } catch (e) { /* ignore */ }
+      ws = null;
+    }
     try {
       ws = new WebSocket(BACKEND_URL);
     } catch (e) {
@@ -27,31 +39,76 @@ function connectWs(sourceLang, targetLang, translationModel) {
     }
 
     ws.onopen = () => {
-      // Send start_capture metadata
+      if (gen !== wsGen) return;  // stale — a newer connectWs() replaced us
+      reconnectAttempts = 0;
+      // Send start_capture metadata (idempotent — backend handles re-sends)
       ws.send(JSON.stringify({
         type: 'start_capture',
         sourceLang: sourceLang,
         targetLang: targetLang,
         translationModel: translationModel
       }));
+      startKeepalive();
       resolve();
     };
 
     ws.onclose = () => {
+      if (gen !== wsGen) return;  // stale — ignore, newer connection is active
       ws = null;
+      stopKeepalive();
       chrome.runtime.sendMessage({ type: 'ws_closed' });
+      // Auto-reconnect if not stopped by user
+      if (!isStopped && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
+        reconnectAttempts++;
+        console.log('[BT-Offscreen] WS closed, reconnecting in ' + delay + 'ms (attempt ' + reconnectAttempts + ')');
+        reconnectTimer = setTimeout(() => {
+          connectWs(sourceLang, targetLang, translationModel)
+            .then(() => {
+              // Reconnected — if the audio stream is still alive, resume sending
+              if (isCapturing && capturedStream) {
+                restartAudioPipeline(sourceLang, targetLang, translationModel);
+              }
+            })
+            .catch(() => {
+              // Will retry via onclose again
+            });
+        }, delay);
+      } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.error('[BT-Offscreen] Max reconnection attempts reached. Giving up.');
+        chrome.runtime.sendMessage({ type: 'ws_dead' });
+      }
     };
 
-    ws.onerror = () => reject(new Error('WebSocket error'));
+    ws.onerror = () => {
+      if (gen !== wsGen) return;  // stale
+      // onclose will fire after onerror, reconnect logic handles it
+    };
 
     ws.onmessage = (event) => {
+      if (gen !== wsGen) return;  // stale
       const msg = JSON.parse(typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data));
-      // Forward all messages to the service worker for routing
-      // to popup/content script.
+      // Forward backend messages to service worker (translation results, etc.)
       chrome.runtime.sendMessage({ type: 'backend_msg', data: event.data })
         .catch(() => { /* service worker may be gone */ });
     };
   });
+}
+
+function startKeepalive() {
+  stopKeepalive();
+  keepaliveTimer = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping' }));
+    }
+  }, KEEPALIVE_INTERVAL_MS);
+}
+
+function stopKeepalive() {
+  if (keepaliveTimer) {
+    clearInterval(keepaliveTimer);
+    keepaliveTimer = null;
+  }
 }
 
 function sendPcmChunk(int16Array) {
@@ -66,11 +123,14 @@ function sendPcmChunk(int16Array) {
 }
 
 // ========== Audio Capture ==========
-// ScriptProcessorNode is deprecated but still the simplest MV3-compatible
-// way to stream tab audio PCM chunks to the backend. We use 4096-frame
-// buffers (~256ms at 16kHz) fired often enough for STT chunking.
 
 function stopCapture() {
+  isStopped = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  stopKeepalive();
   if (processorNode) {
     try { processorNode.disconnect(); } catch (e) { /* may already be disconnected */ }
     processorNode.onaudioprocess = null;
@@ -97,7 +157,49 @@ function stopCapture() {
   chunkSeq = 0;
 }
 
+function restartAudioPipeline(sourceLang, targetLang, translationModel) {
+  // Rebuild the WebAudio pipeline with existing stream
+  if (!capturedStream || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  // Close old pipeline
+  if (processorNode) {
+    try { processorNode.disconnect(); } catch (e) { /* ignore */ }
+    processorNode = null;
+  }
+  if (sourceNode) {
+    try { sourceNode.disconnect(); } catch (e) { /* ignore */ }
+    sourceNode = null;
+  }
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close().catch(() => { /* ignore */ });
+  }
+
+  // Rebuild
+  audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+  sourceNode = audioContext.createMediaStreamSource(capturedStream);
+  processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+  processorNode.onaudioprocess = (event) => {
+    if (!isCapturing) return;
+    const channelData = event.inputBuffer.getChannelData(0);
+    const int16 = new Int16Array(channelData.length);
+    for (let i = 0; i < channelData.length; i++) {
+      const s = Math.max(-1, Math.min(1, channelData[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    sendPcmChunk(int16);
+  };
+
+  sourceNode.connect(processorNode);
+  processorNode.connect(audioContext.destination);
+
+  console.log('[BT-Offscreen] Audio pipeline restarted after WS reconnect');
+  chrome.runtime.sendMessage({ type: 'capture_reconnected' });
+}
+
 async function startCapture(streamId, sourceLang, targetLang, translationModel) {
+  isStopped = false;
+  reconnectAttempts = 0;
   try {
     // Connect WebSocket first
     await connectWs(sourceLang, targetLang, translationModel);
@@ -116,13 +218,11 @@ async function startCapture(streamId, sourceLang, targetLang, translationModel) 
     // WebAudio pipeline: MediaStream → AudioContext(16kHz) → ScriptProcessor → Int16
     audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
     sourceNode = audioContext.createMediaStreamSource(capturedStream);
-    // 4096-frame buffer ≈ 256ms at 16kHz, fired often enough for STT chunking
     processorNode = audioContext.createScriptProcessor(4096, 1, 1);
 
     processorNode.onaudioprocess = (event) => {
       if (!isCapturing) return;
-      const channelData = event.inputBuffer.getChannelData(0); // Float32 [-1, 1]
-      // Convert Float32 [-1, 1] → Int16 [-32768, 32767]
+      const channelData = event.inputBuffer.getChannelData(0);
       const int16 = new Int16Array(channelData.length);
       for (let i = 0; i < channelData.length; i++) {
         const s = Math.max(-1, Math.min(1, channelData[i]));
@@ -132,7 +232,6 @@ async function startCapture(streamId, sourceLang, targetLang, translationModel) 
     };
 
     sourceNode.connect(processorNode);
-    // ScriptProcessor needs to connect to destination to fire onaudioprocess
     processorNode.connect(audioContext.destination);
 
     isCapturing = true;
@@ -159,11 +258,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
 
     case 'get_status':
-      sendResponse({ isCapturing });
+      sendResponse({ isCapturing, wsActive: ws && ws.readyState === WebSocket.OPEN });
       break;
   }
-  return true; // Keep channel open for async
+  return true;
 });
 
-// Signal ready immediately — listener registration completes sync after this script runs
+// Signal ready immediately
 chrome.runtime.sendMessage({ type: 'offscreen_ready' });

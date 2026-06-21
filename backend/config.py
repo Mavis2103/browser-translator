@@ -27,9 +27,9 @@ PIPER_VOICE = os.environ.get("PIPER_VOICE", "vi_VN")  # Vietnamese voice
 # Audio settings
 SAMPLE_RATE = 16000
 AUDIO_CHUNK_DURATION = 5  # seconds before processing a chunk (legacy)
-SILENCE_THRESHOLD = 0.01  # RMS energy above which audio is treated as voiced
-SILENCE_DURATION = 0.8  # seconds of silence to trigger flush (tuned for VN speech)
-MIN_FLUSH_DURATION = 1.0  # minimum buffered audio before flush is allowed
+SILENCE_THRESHOLD = 0.005  # RMS energy above which audio is treated as voiced (faster-whisper has own VAD, this is just for flush gating)
+SILENCE_DURATION = 0.5  # seconds of silence to trigger flush (tuned for faster flush cycles)
+MIN_FLUSH_DURATION = 0.5  # minimum buffered audio before flush is allowed
 MAX_BUFFER_DURATION = 30.0  # hard cap to avoid unbounded buffering
 SEQUENCE_RESET_ON_FLUSH = True  # reset voice-activity timeline after flush
 

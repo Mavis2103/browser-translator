@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.2.1] - 2026-06-22
+
+### Fixed
+- **Text translation appearing slowly or requiring restart** — Root cause: `_reset_buffer()` set `last_voice_activity=0`
+  after every flush, then `_process_buffer()` guard `last_voice_activity <= 0` blocked the next flush until user
+  spoke loud enough to cross the RMS threshold. Removed the blocking guard; faster-whisper's own VAD handles silence
+  detection more reliably.
+- **WebSocket closing during idle pauses** — Chrome terminates MV3 service worker after ~30s idle → kills offscreen
+  document → WS drops → capture stops. Fix:
+  - `offscreen.js`: auto-reconnect WS on unexpected close with exponential backoff (up to 20 attempts).
+    Periodic keepalive pings every 10s prevent idle timeouts.
+  - `background.js`: `chrome.alarms` keeps service worker alive (wake every 20s). Automatic offscreen document
+    recovery when capture is active but offscreen doc is missing (`recoverOffscreenCapture()`).
+  - Backend: responds to `{"type": "ping"}` with `{"type": "pong"}`.
+- **Race condition in WebSocket reconnect** — When `connectWs()` is called while an existing WS is closing, the old
+  `onclose` handler could fire after the new WS was created and set `ws = null`, breaking the new connection. Fixed
+  with generation counter (`wsGen`): each handler checks if it belongs to the current generation.
+
+### Added
+- **Right-click context menu to hide/show translation panel** — New `"contextMenus"` permission. Right-click on any
+  page → "Ẩn / Hiện bảng dịch (Browser Translator)" toggles the audio translation overlay.
+- **`"alarms"` permission** — Required for `chrome.alarms`-based service worker keepalive.
+
+### Changed
+- **VAD thresholds lowered** for faster-whisper compatibility: `SILENCE_DURATION` 0.8s → 0.5s,
+  `MIN_FLUSH_DURATION` 1.0s → 0.5s, `SILENCE_THRESHOLD` 0.01 → 0.005.
+
 ## [v1.2.0] - 2026-06-22
 
 ### Changed (Breaking)
@@ -211,7 +238,8 @@ All notable changes to this project will be documented in this file.
 - Health endpoint (`/api/health`)
 - CPU-only inference, no GPU required
 
-[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.2.0...HEAD
+[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.2.1...HEAD
+[v1.2.1]: https://github.com/Mavis2103/browser-translator/compare/v1.2.0...v1.2.1
 [v1.2.0]: https://github.com/Mavis2103/browser-translator/compare/v1.1.1...v1.2.0
 [v1.1.1]: https://github.com/Mavis2103/browser-translator/compare/v1.1.0...v1.1.1
 [v1.1.0]: https://github.com/Mavis2103/browser-translator/compare/v1.0.13...v1.1.0

@@ -216,9 +216,14 @@ class AudioPipeline:
         if not self._loaded:
             return
 
-        # Guard: drop frames with no detected speech (no voice activity recorded)
-        if self.last_voice_activity <= 0 or self.last_voice_activity >= self.buffer_duration:
+        # Guard: skip if buffer is entirely silence (no voice activity at all).
+        # Note: `last_voice_activity` can be 0 right after `_reset_buffer()` when
+        # pending PCM is merged in — don't block on that, only block when the
+        # FULL buffer content is silence (i.e. buffer has grown past the last
+        # voice event, meaning zero voice in current window).
+        if self.last_voice_activity >= self.buffer_duration:
             # No spoken content in the buffered window — keep waiting
+            logger.debug("Buffer is silence-only (VAD never triggered), waiting...")
             return
 
         # Convert buffer to numpy array (float32 [-1, 1])

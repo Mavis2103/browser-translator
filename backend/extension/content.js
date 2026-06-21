@@ -21,8 +21,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'show_ocr_result':
       showOcrPanel(msg.original, msg.translated);
       break;
+
+    case 'toggle_panel':
+      toggleTranslationPanel();
+      break;
   }
 });
+
+// ========== Toggle Translation Panel (hide/show) ==========
+
+function toggleTranslationPanel() {
+  if (!translationPanel) return;
+  if (translationPanel.style.display === 'none') {
+    translationPanel.style.display = 'block';
+  } else {
+    translationPanel.style.display = 'none';
+  }
+}
 
 // ========== Persistent Translation Overlay (top-right) ==========
 

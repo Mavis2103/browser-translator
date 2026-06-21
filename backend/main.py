@@ -31,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("browser-translator")
 
 # Create FastAPI app
-app = FastAPI(title="Browser Translator", version="1.2.0")
+app = FastAPI(title="Browser Translator", version="1.2.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -238,6 +238,9 @@ async def websocket_audio(websocket: WebSocket):
                                 msg.get("targetLang", "vi"),
                                 model=msg.get("translationModel", None),
                             )
+                        elif msg["type"] == "ping":
+                            # Keepalive — respond so client knows we're alive
+                            schedule(websocket.send_json({"type": "pong"}))
                     except json.JSONDecodeError:
                         pass
 

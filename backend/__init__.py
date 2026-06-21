@@ -1,2 +1,2 @@
 """Browser Translator — AI-powered browser translation tool."""
-__version__ = "1.2.0"
+__version__ = "1.2.1"
