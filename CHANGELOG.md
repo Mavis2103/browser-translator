@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.11] - 2026-06-21
+
+### Fixed
+- **`RuntimeError: There is no current event loop in thread 'asyncio_0'`** — The audio pipeline runs `process_audio_chunk` inside `run_in_executor(...)` (background thread). Its callbacks `on_transcription` / `on_translation` / `on_tts_audio` called `asyncio.ensure_future` from that worker thread. Python ≥3.10 removed implicit event-loop creation for non-main threads, so this raised on every transcript.
+
+  Fix: capture the main loop once per WebSocket handler via `asyncio.get_running_loop()`, then dispatch cross-thread with `main_loop.call_soon_threadsafe(asyncio.ensure_future, coro, loop=main_loop)`.
+
 ## [v1.0.10] - 2026-06-21
 
 ### Fixed

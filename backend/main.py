@@ -139,21 +139,36 @@ async def websocket_audio(websocket: WebSocket):
         "capturing": False,
     }
 
-    # Set up callbacks for this client
+    # Set up callbacks for this client.
+    # Capture the main event loop so callbacks (which fire from a background
+    # thread — see run_in_executor in the receive loop below) can safely
+    # schedule coroutines back onto the loop. Without this,
+    # `asyncio.ensure_future` in a Python ≥3.10 worker thread crashes with
+    # "There is no current event loop in thread 'asyncio_0'".
+    main_loop = asyncio.get_running_loop()
+
     async def send_json(msg: dict):
         try:
             await websocket.send_json(msg)
         except Exception:
             pass
 
+    def schedule(coro):
+        # Thread-safe cross-thread dispatch: schedule the coroutine onto the
+        # main event loop from this background thread (the audio pipeline).
+        try:
+            main_loop.call_soon_threadsafe(asyncio.ensure_future, coro, loop=main_loop)
+        except Exception as e:
+            logger.warning("schedule() failed: %s", e)
+
     def on_transcription(text):
-        asyncio.ensure_future(send_json({
+        schedule(send_json({
             "type": "transcription",
             "text": text,
         }))
 
     def on_translation(original, translated, source, target):
-        asyncio.ensure_future(send_json({
+        schedule(send_json({
             "type": "translation",
             "original": original,
             "translated": translated,
@@ -162,7 +177,7 @@ async def websocket_audio(websocket: WebSocket):
         }))
 
     def on_tts_audio(b64_data, sample_rate):
-        asyncio.ensure_future(websocket.send_json({
+        schedule(websocket.send_json({
             "type": "tts_audio",
             "data": b64_data,
             "sampleRate": sample_rate,
