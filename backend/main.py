@@ -121,15 +121,15 @@ async def check_ollama():
     """Check if Ollama is running and has the model available."""
     import urllib.request
     import urllib.error
+    from backend.config import OLLAMA_URL, TRANSLATION_MODEL
 
     try:
-        req = urllib.request.Request("http://localhost:11434/api/tags")
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/tags")
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             models = [m["name"] for m in data.get("models", [])]
             logger.info("Ollama models available: %s", ", ".join(models) if models else "none")
 
-            from backend.config import TRANSLATION_MODEL
             if TRANSLATION_MODEL not in models:
                 logger.warning("Model '%s' not found in Ollama! Please run: ollama pull %s",
                                TRANSLATION_MODEL, TRANSLATION_MODEL)

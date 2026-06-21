@@ -34,7 +34,7 @@ class AudioPipeline:
         # Pending audio captured during flushes — merged into main buffer on reset.
         # Prevents lost-sentence bug when translate() takes longer than 1 buffer.
         self._pending_pcm = bytearray()
-        self._pending_pending_dur = 0.0
+        self._pending_dur = 0.0
 
         # Callbacks
         self.on_transcription: Optional[Callable] = None
@@ -145,7 +145,7 @@ class AudioPipeline:
         if self.flushing:
             # Buffer for next flush — DO NOT drop
             self._pending_pcm.extend(pcm_data)
-            self._pending_pending_dur += len(pcm_data) / (SAMPLE_RATE * 2)
+            self._pending_dur += len(pcm_data) / (SAMPLE_RATE * 2)
             return
 
         self.audio_buffer.extend(pcm_data)
@@ -234,13 +234,11 @@ class AudioPipeline:
             transcript = self.stt_model.transcribe_without_streaming(
                 audio_array.tolist(), sample_rate=SAMPLE_RATE
             )
-            text = str(transcript).strip()
-            if not text or text.isspace():
-                text = ""
-                for line in transcript.lines:
-                    if line.text.strip():
-                        text += line.text.strip() + " "
-                text = text.strip()
+            text = ""
+            for line in transcript.lines:
+                if line.text.strip():
+                    text += line.text.strip() + " "
+            text = text.strip()
 
             if not text:
                 logger.debug("No speech detected")
@@ -284,7 +282,7 @@ class AudioPipeline:
             n = len(self._pending_pcm)
             self.audio_buffer.extend(self._pending_pcm)
             self._pending_pcm = bytearray()
-            self._pending_pending_dur = 0.0
+            self._pending_dur = 0.0
             self.buffer_duration = n / (SAMPLE_RATE * 2)
             # Vue voice activity snapshot — re-evaluate caller side via VAD
             logger.debug("Merged %d pending bytes (%.2fs) into fresh buffer",
