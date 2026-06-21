@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.10] - 2026-06-21
+
+### Fixed
+- **`No module named 'pyaudioop'` crash on Python 3.13** — pydub's WebM/Opus decoder transitively imports `pyaudioop` which was removed from Python 3.13 standard library. When the extension sent WebM/Opus, the backend fell back to treating it as raw PCM, then crashed in `np.frombuffer(..., dtype=np.int16)` with `ValueError: buffer size must be a multiple of element size`.
+
+### Changed
+- **Audio encoding protocol** — extension now streams raw **PCM16 LE 16kHz mono** via WebAudio `ScriptProcessorNode` instead of WebM/Opus via `MediaRecorder`. This:
+  - Matches Moonshine STT's native format (Float32, mono, 16kHz) — backend converts Int16 → Float32 internally.
+  - Eliminates the broken pydub decode path entirely.
+  - Bandwidth: 32 KB/s × 1 channel × 2 bytes = same or lower than WebM/Opus 16 kbps.
+- **`_decode_audio_chunk`** — guards `pydub` import so it only triggers for legacy WebM clients; misaligned PCM chunks are dropped with a warning instead of crashing.
+
 ## [v1.0.9] - 2026-06-21
 
 ### Fixed

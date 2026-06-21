@@ -165,21 +165,34 @@ class AudioPipeline:
             self._process_buffer()
 
     def _decode_audio_chunk(self, chunk_data: bytes) -> Optional[bytes]:
-        """Decode webm/opus or raw PCM chunk."""
-        try:
-            # Check if it's a webm container (starts with 1a45dfa3)
-            if len(chunk_data) > 4 and chunk_data[:4] == b'\x1a\x45\xdf\xa3':
-                from pydub import AudioSegment
+        """Decode webm/opus or raw PCM chunk.
+
+        Current protocol (v1.0.9+): the extension streams raw PCM16 LE 16kHz
+        mono from offscreen.js — never WebM. WebM/Opus decoding is kept as a
+        defensive fallback for legacy clients, but the pydub path is broken on
+        Python 3.13 (`pyaudioop` removed). We bail out of the pydub path
+        cleanly rather than crashing the backend with
+        ``No module named 'pyaudioop'``.
+        """
+        # WebM/Opus magic — only enter pydub path if pydub is importable
+        if len(chunk_data) > 4 and chunk_data[:4] == b'\x1a\x45\xdf\xa3':
+            try:
+                from pydub import AudioSegment  # noqa: F401  (probes availability)
                 import io
                 audio = AudioSegment.from_file(io.BytesIO(chunk_data), format="webm")
                 audio = audio.set_frame_rate(SAMPLE_RATE).set_channels(1).set_sample_width(2)
                 return audio.raw_data
-            else:
-                # Assume raw PCM 16-bit mono
-                return chunk_data
-        except Exception as e:
-            logger.warning("Audio decode failed, treating as PCM: %s", e)
-            return chunk_data
+            except Exception as e:
+                logger.warning("WebM decode skipped (%s); expecting raw PCM16 from extension", e)
+                # Fall through and treat as raw PCM (will likely fail int16 alignment
+                # check if it really is WebM — that's the client's bug to fix).
+                return None
+        # Assume raw PCM 16-bit mono (current offscreen.js path).
+        # Validate byte alignment so np.frombuffer(..., dtype=int16) won't crash.
+        if len(chunk_data) % 2 != 0:
+            logger.warning("Dropping misaligned PCM chunk (len=%d, not even)", len(chunk_data))
+            return None
+        return chunk_data
 
     def _process_buffer(self):
         """Transcribe buffered audio, translate it, and generate TTS."""

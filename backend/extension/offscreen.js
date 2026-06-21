@@ -1,17 +1,21 @@
 // Browser Translator - Offscreen Document
-// Handles getUserMedia + MediaRecorder for tab audio capture.
-// Created by the service worker via chrome.offscreen.createDocument().
-// Communicates audio chunks back to the service worker via chrome.runtime.
+// Captures tab audio via getUserMedia + WebAudio API, streams raw PCM16 (16kHz mono)
+// to the backend WebSocket. Moonshine STT expects PCM Float32 — we send Int16 over the
+// wire and let the backend convert (np.frombuffer(..., dtype=np.int16)). This avoids
+// the pydub/pyaudioop decode path that's broken on Python 3.13.
 
 const BACKEND_URL = 'ws://localhost:8765/ws/audio';
+const SAMPLE_RATE = 16000;
 
-let mediaRecorder = null;
-let capturedStream = null;
 let ws = null;
+let audioContext = null;
+let sourceNode = null;
+let processorNode = null;
+let capturedStream = null;
 let isCapturing = false;
 let chunkSeq = 0;
 
-// ========== WebSocket for streaming audio ==========
+// ========== WebSocket connection ==========
 
 function connectWs(sourceLang, targetLang, translationModel) {
   return new Promise((resolve, reject) => {
@@ -23,7 +27,6 @@ function connectWs(sourceLang, targetLang, translationModel) {
     }
 
     ws.onopen = () => {
-      console.log('[BT-Offscreen] WS connected');
       // Send start_capture metadata
       ws.send(JSON.stringify({
         type: 'start_capture',
@@ -34,45 +37,54 @@ function connectWs(sourceLang, targetLang, translationModel) {
       resolve();
     };
 
-    ws.onclose = (e) => {
-      console.log('[BT-Offscreen] WS closed:', e.code, e.reason);
+    ws.onclose = () => {
       ws = null;
       chrome.runtime.sendMessage({ type: 'ws_closed' });
     };
 
-    ws.onerror = (e) => {
-      console.error('[BT-Offscreen] WS error');
-      reject(new Error('WebSocket error'));
-    };
+    ws.onerror = () => reject(new Error('WebSocket error'));
 
     ws.onmessage = (event) => {
       // Forward translation results back to service worker
-      chrome.runtime.sendMessage({ type: 'backend_msg', data: event.data });
+      try {
+        chrome.runtime.sendMessage({ type: 'backend_msg', data: event.data });
+      } catch (e) {
+        // Service worker may have shut down — drop the message
+      }
     };
   });
 }
 
-function sendAudioChunk(blob) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    console.warn('[BT-Offscreen] WS not open, dropping chunk');
-    return;
-  }
+function sendPcmChunk(int16Array) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   chunkSeq++;
+  // 4-byte big-endian sequence prefix + PCM16 LE bytes
   const seqPrefix = new ArrayBuffer(4);
   new DataView(seqPrefix).setUint32(0, chunkSeq, false);
-  const combined = new Blob([seqPrefix, blob], { type: 'application/octet-stream' });
+  const audioBytes = new Uint8Array(int16Array.buffer, int16Array.byteOffset, int16Array.byteLength);
+  const combined = new Blob([seqPrefix, audioBytes], { type: 'application/octet-stream' });
   ws.send(combined);
 }
 
 function stopCapture() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+  if (processorNode) {
+    try { processorNode.disconnect(); } catch (e) { /* may already be disconnected */ }
+    processorNode.onaudioprocess = null;
+    processorNode = null;
+  }
+  if (sourceNode) {
+    try { sourceNode.disconnect(); } catch (e) { /* may already be disconnected */ }
+    sourceNode = null;
   }
   if (capturedStream) {
     capturedStream.getTracks().forEach(t => t.stop());
     capturedStream = null;
   }
-  if (ws) {
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close().catch(() => { /* ignore */ });
+    audioContext = null;
+  }
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'stop_capture' }));
     ws.close();
     ws = null;
@@ -87,44 +99,39 @@ async function startCapture(streamId, sourceLang, targetLang, translationModel) 
     await connectWs(sourceLang, targetLang, translationModel);
 
     // Get audio stream using the stream ID
-    // chromeMediaSource and chromeMediaSourceId MUST be in `mandatory`.
-    // sampleRate is requested in `optional` — backend transcodes to 16kHz anyway.
     capturedStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {
           chromeMediaSource: 'tab',
           chromeMediaSourceId: streamId
         },
-        optional: [{ sampleRate: 16000 }]
+        optional: [{ sampleRate: SAMPLE_RATE }]
       }
     });
 
-    // MediaRecorder WebM/Opus — backend decodes via pydub/audio_pipeline.py
-    // (see _decode_audio_chunk: detects EBML magic 0x1A45DFA3)
-    const options = {
-      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm',
-      audioBitsPerSecond: 16000
-    };
+    // WebAudio pipeline: MediaStream → AudioContext(16kHz) → ScriptProcessor → Int16
+    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+    sourceNode = audioContext.createMediaStreamSource(capturedStream);
+    // 4096-frame buffer ≈ 256ms at 16kHz, fired often enough for STT chunking
+    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
 
-    mediaRecorder = new MediaRecorder(capturedStream, options);
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        sendAudioChunk(event.data);
+    processorNode.onaudioprocess = (event) => {
+      if (!isCapturing) return;
+      const channelData = event.inputBuffer.getChannelData(0); // Float32 [-1, 1]
+      // Convert Float32 [-1, 1] → Int16 [-32768, 32767]
+      const int16 = new Int16Array(channelData.length);
+      for (let i = 0; i < channelData.length; i++) {
+        const s = Math.max(-1, Math.min(1, channelData[i]));
+        int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
       }
+      sendPcmChunk(int16);
     };
 
-    mediaRecorder.onstop = () => {
-      console.log('[BT-Offscreen] Capture stopped');
-      stopCapture();
-    };
+    sourceNode.connect(processorNode);
+    // ScriptProcessor needs to connect to destination to fire onaudioprocess
+    processorNode.connect(audioContext.destination);
 
-    mediaRecorder.start(1000); // Chunks every 1s
     isCapturing = true;
-    console.log('[BT-Offscreen] Audio capture started');
-
     chrome.runtime.sendMessage({ type: 'capture_started' });
   } catch (e) {
     console.error('[BT-Offscreen] Capture failed:', e);
@@ -154,5 +161,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // Keep channel open for async
 });
 
-// Signal ready
+// Signal ready immediately — listener registration completes sync after this script runs
 chrome.runtime.sendMessage({ type: 'offscreen_ready' });
