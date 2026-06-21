@@ -1,3 +1,3 @@
 """Browser Translator — AI-powered browser translation tool."""
 
-__version__ = "1.0.11"
+__version__ = "1.0.12"

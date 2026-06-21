@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.12] - 2026-06-21
+
+### Fixed
+- **`schedule() failed: call_soon_threadsafe() got an unexpected keyword argument 'loop'`** — `BaseEventLoop.call_soon_threadsafe` only forwards *positional* args to the scheduled callback; passing `loop=` keyword bound to `asyncio.ensure_future` failed with `TypeError`. Replaced with the canonical helper **`asyncio.run_coroutine_threadsafe(coro, main_loop)`** — the standard idiom for scheduling coroutines from a worker thread onto a known event loop.
+
 ## [v1.0.11] - 2026-06-21
 
 ### Fixed

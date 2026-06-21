@@ -156,8 +156,9 @@ async def websocket_audio(websocket: WebSocket):
     def schedule(coro):
         # Thread-safe cross-thread dispatch: schedule the coroutine onto the
         # main event loop from this background thread (the audio pipeline).
+        # asyncio.run_coroutine_threadsafe is the canonical helper for this.
         try:
-            main_loop.call_soon_threadsafe(asyncio.ensure_future, coro, loop=main_loop)
+            asyncio.run_coroutine_threadsafe(coro, main_loop)
         except Exception as e:
             logger.warning("schedule() failed: %s", e)
 
