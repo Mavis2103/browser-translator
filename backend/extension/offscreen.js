@@ -46,24 +46,10 @@ function connectWs(sourceLang, targetLang, translationModel) {
 
     ws.onmessage = (event) => {
       const msg = JSON.parse(typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data));
-      switch (msg.type) {
-        case 'tts_audio':
-          // TTS audio plays in the offscreen doc (it has DOM/AudioContext).
-          // The service worker has no DOM — can't instantiate AudioContext.
-          playTranslatedAudio(msg.data, msg.sampleRate);
-          break;
-
-        case 'translation':
-        case 'transcription':
-        case 'ocr_result':
-        case 'status':
-        case 'error':
-          // Forward non-audio messages to the service worker for routing
-          // to popup/content script.
-          chrome.runtime.sendMessage({ type: 'backend_msg', data: event.data })
-            .catch(() => { /* service worker may be gone */ });
-          break;
-      }
+      // Forward all messages to the service worker for routing
+      // to popup/content script.
+      chrome.runtime.sendMessage({ type: 'backend_msg', data: event.data })
+        .catch(() => { /* service worker may be gone */ });
     };
   });
 }
@@ -79,45 +65,10 @@ function sendPcmChunk(int16Array) {
   ws.send(combined);
 }
 
-// ========== Audio Playback (translated TTS) ==========
-// Reuses the shared `audioContext` declared above (line ~11) for capture.
-// AudioContext can only live in a DOM context — which offscreen.html provides.
-
-function playTranslatedAudio(base64Data, sampleRate = 22050) {
-  try {
-    const binaryStr = atob(base64Data);
-    const len = binaryStr.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
-
-    // If the shared context has a different sample rate, recreate.
-    if (!audioContext || audioContext.sampleRate !== sampleRate) {
-      if (audioContext) {
-        audioContext.close().catch(() => {});
-        audioContext = null;
-      }
-      audioContext = new AudioContext({ sampleRate });
-    }
-
-    const pcmData = new Int16Array(bytes.buffer);
-    const floatData = new Float32Array(pcmData.length);
-    for (let i = 0; i < pcmData.length; i++) {
-      floatData[i] = pcmData[i] / 32768.0;
-    }
-
-    const dest = audioContext.destination;
-    const audioBuffer = audioContext.createBuffer(1, floatData.length, sampleRate);
-    audioBuffer.getChannelData(0).set(floatData);
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(dest);
-    source.start();
-  } catch (e) {
-    console.error('[BT-Offscreen] TTS playback failed:', e);
-  }
-}
+// ========== Audio Capture ==========
+// ScriptProcessorNode is deprecated but still the simplest MV3-compatible
+// way to stream tab audio PCM chunks to the backend. We use 4096-frame
+// buffers (~256ms at 16kHz) fired often enough for STT chunking.
 
 function stopCapture() {
   if (processorNode) {

@@ -250,9 +250,9 @@ async function pollHealth() {
     if (data.status === 'ok') {
       healthRow.style.display = 'flex';
       updateHealth('health-stt', data.models?.stt);
-      updateHealth('health-tts', data.models?.tts);
       updateHealth('health-ocr', data.models?.ocr);
       updateHealthLabel('health-llm', data.models?.translation || '?');
+      // TTS is intentionally disabled by default (STT-only mode)
     } else {
       healthRow.style.display = 'none';
     }

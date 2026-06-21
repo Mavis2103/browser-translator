@@ -88,9 +88,19 @@ async def startup():
     audio_pipeline = AudioPipeline()
     ocr_pipeline = OcrPipeline()
 
-    # Load STT + TTS models (blocking, run in thread pool)
+    # Load STT + optionally TTS models (blocking, run in thread pool).
+    # TTS is skipped by default (STT-only mode for extension). Load TTS only
+    # when --system flag is set (system-level audio capture needs playback).
+    load_tts = False
+    try:
+        load_tts = getattr(app.state, "system_audio", False)
+    except Exception:
+        pass
+
     logger.info("Loading audio models (this may take a moment)...")
-    await asyncio.get_event_loop().run_in_executor(None, audio_pipeline.load_models)
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: audio_pipeline.load_models(tts=load_tts)
+    )
 
     # Load OCR model
     logger.info("Loading OCR model...")

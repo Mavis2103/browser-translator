@@ -1,6 +1,7 @@
 // Browser Translator - Content Script
 // Handles overlay translations on web pages
 
+let translationPanel = null;  // persistent panel for audio translations
 let overlayContainer = null;
 let overlayVisible = false;
 
@@ -8,58 +9,125 @@ let overlayVisible = false;
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case 'translation':
-      // Show a small toast-like notification at top of page
-      showToast(`${msg.source || ''} → ${msg.target}: ${msg.translated}`);
+      showTranslation(msg.original, msg.translated, msg.source, msg.target);
       break;
 
     case 'ocr_translation_overlay':
-      // Apply OCR overlay translations
       if (msg.elements && msg.elements.length > 0) {
         applyOcrOverlay(msg.elements);
       }
       break;
 
     case 'show_ocr_result':
-      // Show OCR result as a floating panel on the page
       showOcrPanel(msg.original, msg.translated);
       break;
   }
 });
 
-// ========== Toast Notification ==========
+// ========== Persistent Translation Overlay (top-right) ==========
 
-function showToast(text, duration = 4000) {
-  let toast = document.getElementById('bt-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'bt-toast';
-    toast.style.cssText = `
+function showTranslation(original, translated, sourceLang, targetLang) {
+  if (!translationPanel) {
+    translationPanel = document.createElement('div');
+    translationPanel.id = 'bt-translation-panel';
+    translationPanel.style.cssText = `
       position: fixed;
       top: 16px;
       right: 16px;
       z-index: 2147483647;
       background: #1a1a2e;
       color: #e0e0e0;
-      padding: 10px 16px;
+      padding: 0;
       border-radius: 8px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px;
-      line-height: 1.4;
-      max-width: 400px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      line-height: 1.5;
+      max-width: 420px;
+      max-height: 70vh;
+      overflow-y: auto;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
       border: 1px solid #2a2a4a;
-      transition: opacity 0.3s ease;
+      min-width: 240px;
     `;
-    document.body.appendChild(toast);
+    document.body.appendChild(translationPanel);
+    renderTranslationHeader();
   }
 
-  toast.textContent = text;
-  toast.style.opacity = '1';
+  addTranslationEntry(original, translated, sourceLang, targetLang);
+  translationPanel.style.display = 'block';
+}
 
-  clearTimeout(toast._hideTimer);
-  toast._hideTimer = setTimeout(() => {
-    toast.style.opacity = '0';
-  }, duration);
+function renderTranslationHeader() {
+  // Header + close button
+  const header = document.createElement('div');
+  header.style.cssText = `
+    padding: 8px 12px;
+    background: #2a2a4a;
+    border-radius: 8px 8px 0 0;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+  `;
+  header.innerHTML = `
+    <span>🔊 Audio Translation</span>
+    <span id="bt-tts-close" style="cursor:pointer;opacity:0.6;font-size:16px;">✕</span>
+  `;
+  translationPanel.appendChild(header);
+
+  // Content container
+  const body = document.createElement('div');
+  body.id = 'bt-tts-body';
+  body.style.cssText = `padding: 0;`;
+  translationPanel.appendChild(body);
+
+  // Close handler
+  header.querySelector('#bt-tts-close').addEventListener('click', () => {
+    translationPanel.style.display = 'none';
+  });
+
+  // Esc to close
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && translationPanel && translationPanel.style.display !== 'none') {
+      translationPanel.style.display = 'none';
+    }
+  });
+}
+
+function addTranslationEntry(original, translated, sourceLang, targetLang) {
+  const body = translationPanel.querySelector('#bt-tts-body');
+  if (!body) return;
+
+  function esc(s) {
+    if (!s) return '';
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  const entry = document.createElement('div');
+  // Alternate background for readability
+  const isOdd = body.children.length % 2 === 0;
+  entry.style.cssText = `
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2a4a;
+    background: ${isOdd ? 'transparent' : 'rgba(42,42,74,0.3)'};
+  `;
+  entry.innerHTML = `
+    <div style="font-size:11px;color:#888;margin-bottom:2px;">
+      ${esc(sourceLang || '?')} → ${esc(targetLang || '?')}
+    </div>
+    <div style="color:#aaa;font-size:12px;margin-bottom:2px;">${esc(original).slice(0, 200)}</div>
+    <div style="color:#4fc3f7;">${esc(translated).slice(0, 200)}</div>
+  `;
+  body.prepend(entry);
+
+  // Keep max 20 entries
+  while (body.children.length > 20) {
+    body.lastChild.remove();
+  }
 }
 
 // ========== OCR Overlay ==========

@@ -90,11 +90,6 @@ function handleBackendMessage(data) {
         broadcastToPopup({ type: 'transcription', text: msg.text });
         break;
 
-      case 'tts_audio':
-        // Received translated audio from backend
-        playTranslatedAudio(msg.data, msg.sampleRate);
-        break;
-
       case 'ocr_result':
         broadcastToPopup({
           type: 'ocr_result',
@@ -216,49 +211,6 @@ async function stopAudioCapture() {
   offscreenCaptureTabId = null;
   broadcastState();
   return { success: true };
-}
-
-// ========== Audio Playback (TTS output) ==========
-
-let audioContext = null;
-let gainNode = null;
-
-function playTranslatedAudio(base64Data, sampleRate = 22050) {
-  try {
-    // Decode base64 to ArrayBuffer
-    const binaryStr = atob(base64Data);
-    const len = binaryStr.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
-
-    // Create audio context
-    if (!audioContext) {
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      gainNode = audioContext.createGain();
-      gainNode.gain.value = 1.0;
-      gainNode.connect(audioContext.destination);
-    }
-
-    // Decode PCM16 data
-    const pcmData = new Int16Array(bytes.buffer);
-    const floatData = new Float32Array(pcmData.length);
-    for (let i = 0; i < pcmData.length; i++) {
-      floatData[i] = pcmData[i] / 32768.0;
-    }
-
-    // Create audio buffer and play
-    const audioBuffer = audioContext.createBuffer(1, floatData.length, sampleRate);
-    audioBuffer.getChannelData(0).set(floatData);
-
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(gainNode);
-    source.start();
-  } catch (e) {
-    console.error('[BT] Audio playback failed:', e);
-  }
 }
 
 // ========== OCR via Backend HTTP ==========

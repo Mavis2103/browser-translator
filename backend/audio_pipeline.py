@@ -45,8 +45,12 @@ class AudioPipeline:
         self.target_lang = "vi"
         self.translation_model = "qwen3.5:0.8b"  # may be overridden via set_language
 
-    def load_models(self):
-        """Load Moonshine STT and TTS models concurrently.
+    def load_models(self, tts: bool = True):
+        """Load Moonshine STT and optionally TTS models concurrently.
+
+        Args:
+            tts: If True (default), load the TTS engine. Set False for
+                 STT-only mode (extension-based capture without playback).
 
         STT + TTS live in the same library but load weight files independently,
         so we run them on two threads to cut the total cold-load time roughly
@@ -81,6 +85,9 @@ class AudioPipeline:
                 logger.error("Failed to load Moonshine STT: %s", e)
 
         def _load_tts_thread():
+            if not tts:
+                logger.info("TTS loading skipped (STT-only mode)")
+                return
             try:
                 from moonshine_voice.tts import TextToSpeech
                 with download_lock:
