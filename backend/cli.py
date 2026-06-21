@@ -310,6 +310,7 @@ def cmd_install_deps(args):
 
     print()
     print("=== Python dependencies === (should already be installed by uv tool)")
+    print("  (add OCR support with: uv tool install --with paddleocr --with paddlepaddle --reinstall 'git+https://github.com/Mavis2103/browser-translator')")
 
     print()
     print("=== Ollama ===")

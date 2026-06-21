@@ -19,37 +19,49 @@ Local AI-powered tool for **speech-to-speech translation** and **OCR page transl
 | Browser    | Google Chrome 120+          | Chrome 149+             |
 | Disk       | 6GB free                    | 15GB+                   |
 
-## Quick Start (on a new machine)
+## Quick Start
+
+### Option A: Install CLI from GitHub (no git clone)
 
 ```bash
-# 1. Install the CLI globally (no git clone needed)
+# 1. Install the CLI globally — extension bundled in wheel
 uv tool install 'git+https://github.com/Mavis2103/browser-translator'
 
-# 2. Install system + Python deps
+# 2. Install system deps (ffmpeg, etc.)
 browser-translator install-deps
 
 # 3. Start Ollama (if not already running)
 ollama serve &
 
 # 4. Start the backend
-browser-translator start
-#   → Ctrl+C to stop
-#   → Or: browser-translator start --daemon  (background, use `stop` to kill)
+browser-translator start              # foreground; Ctrl+C to stop
+# or:  browser-translator start --daemon   # background; use `stop` to kill
 ```
 
 ```
-# Load extension in Chrome
-chrome://extensions  →  Developer mode  →  Load unpacked
-Select: browser-translator/backend/extension/
-
-# If installed via git clone, the extension is at:
-#   browser-translator/backend/extension/
-# If only the CLI was installed (no clone), get the extension separately:
-#   1. browser-translator build-ext    (creates a .zip)
-#   2. Extract and load in Chrome
+# 5. Extract extension and load in Chrome:
+browser-translator build-ext                # creates ~/.local/share/browser-translator/dist/*.zip
+unzip ~/.local/share/browser-translator/dist/browser-translator-extension-*.zip -d /tmp/ext
+chrome://extensions  →  Developer mode  →  Load unpacked  →  select /tmp/ext/extension/
 ```
 
-Then click the 🌐 icon in the Chrome toolbar to open the control panel.
+### Option B: Clone the repo (development or Chrome auto-launch)
+
+```bash
+git clone https://github.com/Mavis2103/browser-translator.git
+cd browser-translator
+
+# Install CLI in editable mode
+uv tool install -e .
+
+# System deps
+browser-translator install-deps
+
+# Load extension directly from the repo
+# chrome://extensions → Developer mode → Load unpacked → select /path/to/browser-translator/backend/extension/
+```
+
+### Then click the 🌐 icon in the Chrome toolbar to open the control panel.
 
 ## Managing the Backend
 
@@ -73,12 +85,16 @@ browser-translator install-deps   # Install all deps (fresh machine)
 
 ### `browser-translator build-ext`
 
-Packages `extension/` into `dist/browser-translator-extension-v1.0.4.zip` for distribution:
+Packages the Chrome extension into a `.zip` for distribution. Output goes to
+`~/.local/share/browser-translator/dist/`:
 
 ```bash
 browser-translator build-ext
-# → dist/browser-translator-extension-v1.0.4.zip (ready to share)
+# → ~/.local/share/browser-translator/dist/browser-translator-extension-v1.0.5.zip (ready to share)
 ```
+
+When developing from a cloned repo, the extension can also be loaded directly
+without re-packaging (see Option B above).
 
 ### `browser-translator status`
 
@@ -130,11 +146,14 @@ browser-translator build-ext
 
 ### Optional: OCR Support
 
-OCR requires `paddleocr` and `paddlepaddle` (CPU):
+OCR requires `paddleocr` and `paddlepaddle` (CPU, ~1 GB disk):
 
 ```bash
+# In a clone (editable install):
 pip install paddleocr paddlepaddle
-# Or: uv pip install browser-translator[ocr]
+
+# Via uv tool (git install, OCR extra):
+uv tool install --with paddleocr --with paddlepaddle --reinstall 'git+https://github.com/Mavis2103/browser-translator'
 ```
 
 ## Project Structure

@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.5] - 2026-06-21
+
+### Added
+- **`browser-translator` CLI** — new entry point via `uv tool install`. Commands:
+  `start`, `start --daemon`, `stop`, `status`, `build-ext`, `install-deps`.
+- **Extension bundled in wheel** — `backend/extension/` is included as package data.
+  `build-ext` works from installed packages (no repo clone needed).
+- **`MANIFEST.in`** — ensures extension files are included in source distributions.
+- **`backend/__init__.py`** — `backend` is now a proper Python package.
+- **`pyproject.toml`** — project metadata, dependencies, scripts entry point.
+
+### Changed
+- **Extension moved** to `backend/extension/`. Symlink `extension → backend/extension/` at
+  project root preserves backward compatibility.
+- **`build-ext` output** → `~/.local/share/browser-translator/dist/` (XDG-compatible).
+- **`install-deps`** no longer requires `requirements.txt` path; shows OCR install hint.
+- **Version bumped** to 1.0.5 across all components.
+- **README** rewritten with two Quick Start paths (git install vs clone).
+
+### Fixed
+- **No hardcoded paths** — Ollama binary auto-detected (PATH first, then common locations);
+  `OLLAMA_LIBRARY_PATH` derived from binary location. Shell scripts updated.
+- **No `sys.path.insert(0, ...)` hack** — removed from `main.py`. Package imports work
+  via proper module resolution.
+- **No `PROJECT_ROOT` global** — replaced with `_project_root()` helper that only
+  resolves to the repo root in development/editable mode.
+
 ## [v1.0.4] - 2026-06-20
 
 ### Performance
