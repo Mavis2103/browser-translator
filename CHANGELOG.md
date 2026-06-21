@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.8] - 2026-06-21
+
+### Fixed
+- **`chrome.tabCapture.capture is not a function`** — Service worker cannot call `capture()` directly (extension API is "Foreground only"). Replaced with the MV3 offscreen-document pattern: `chrome.tabCapture.getMediaStreamId()` in service worker → consumer offscreen document runs `navigator.mediaDevices.getUserMedia` + `MediaRecorder`. Works on Chrome 116+, Brave, and Edge.
+
+### Added
+- **`offscreen.html` + `offscreen.js`** — new extension files for audio capture.
+- **`minimum_chrome_version: "116"`** — manifest pins the minimum Chromium that supports offscreen-document `getMediaStreamId` consumption.
+- **`optional: [{ sampleRate: 16000 }]`** in `offscreen.js` getUserMedia, matching Moonshine STT's native sample rate.
+
 ## [v1.0.7] - 2026-06-21
 
 ### Fixed

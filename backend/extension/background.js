@@ -1,17 +1,13 @@
 // Browser Translator - Background Service Worker
-// Handles tabCapture audio capture, WebSocket connection to Python backend,
+// Handles audio capture (via offscreen document), WebSocket connection to Python backend,
 // and message routing between popup, content scripts, and backend.
 
 const BACKEND_URL = 'ws://localhost:8765/ws/audio';
 
 let ws = null;
 let wsReconnectTimer = null;
-let mediaRecorder = null;
-let recordedChunks = [];
 let isCapturing = false;
-let capturedStream = null;
-let chunkSeq = 0;
-let lastSentSeq = 0;
+let offscreenCaptureTabId = null;
 
 // ========== WebSocket connection ==========
 
@@ -121,11 +117,50 @@ function handleBackendMessage(data) {
   }
 }
 
-// ========== Audio Capture (tabCapture) ==========
+// ========== Audio Capture (via Offscreen Document) ==========
+// Uses chrome.tabCapture.getMediaStreamId() + offscreen document for
+// MV3-compatible tab audio capture (works in Chrome, Brave, Edge).
+// See: https://developer.chrome.com/docs/extensions/reference/api/tabCapture
+
+async function ensureOffscreenDocument() {
+  const existing = await chrome.offscreen.hasDocument();
+  if (!existing) {
+    await chrome.offscreen.createDocument({
+      url: chrome.runtime.getURL('offscreen.html'),
+      reasons: ['USER_MEDIA'],
+      justification: 'Capture tab audio for speech-to-speech translation'
+    });
+    // Wait for offscreen.js to signal ready
+    await waitForOffscreenReady();
+  }
+}
+
+function waitForOffscreenReady() {
+  return new Promise((resolve) => {
+    const handler = (msg) => {
+      if (msg.type === 'offscreen_ready') {
+        chrome.runtime.onMessage.removeListener(handler);
+        resolve();
+      }
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    // Safety: resolve anyway after 5s
+    setTimeout(() => {
+      chrome.runtime.onMessage.removeListener(handler);
+      resolve();
+    }, 5000);
+  });
+}
+
+async function closeOffscreenDocument() {
+  const existing = await chrome.offscreen.hasDocument();
+  if (existing) {
+    await chrome.offscreen.closeDocument();
+  }
+}
 
 async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', translationModel = 'qwen3.5:0.8b') {
   if (isCapturing) {
-    console.warn('[BT] Already capturing audio');
     return { success: false, error: 'Already capturing' };
   }
 
@@ -133,66 +168,32 @@ async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', transla
     // Get current tab
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tabs[0]) throw new Error('No active tab');
+    offscreenCaptureTabId = tabs[0].id;
 
-    // Capture tab audio
-    capturedStream = await chrome.tabCapture.capture({
-      audio: true,
-      video: false,
-      audioConstraints: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
-      }
+    // Ensure offscreen document exists
+    await ensureOffscreenDocument();
+
+    // Get stream ID (MV3-compatible, works without user gesture)
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      consumerTabId: offscreenCaptureTabId,
+      targetTabId: offscreenCaptureTabId
     });
 
-    // Notify backend about new capture
-    sendToBackend(JSON.stringify({
-      type: 'start_capture',
+    // Send stream ID to offscreen doc to start capture
+    const resp = await chrome.runtime.sendMessage({
+      action: 'start_capture',
+      streamId: streamId,
       sourceLang: sourceLang,
       targetLang: targetLang,
-      translationModel: translationModel,
-      tabTitle: tabs[0].title || '',
-      tabUrl: tabs[0].url || ''
-    }));
+      translationModel: translationModel
+    });
 
-    // Set up MediaRecorder for streaming
-    const options = {
-      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm',
-      audioBitsPerSecond: 16000
-    };
+    if (!resp || !resp.received) {
+      throw new Error('Offscreen document did not acknowledge capture start');
+    }
 
-    recordedChunks = [];
-    chunkSeq = 0;
-    lastSentSeq = 0;
-    mediaRecorder = new MediaRecorder(capturedStream, options);
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        chunkSeq++;
-        // Prefix binary data with 4-byte big-endian sequence number for dedup
-        const seqPrefix = new ArrayBuffer(4);
-        new DataView(seqPrefix).setUint32(0, chunkSeq, false);
-        const combined = new Blob([seqPrefix, event.data], { type: 'application/octet-stream' });
-        sendToBackend(combined);
-        lastSentSeq = chunkSeq;
-      }
-    };
-
-    mediaRecorder.onstop = () => {
-      console.log('[BT] Audio capture stopped');
-      sendToBackend(JSON.stringify({ type: 'stop_capture' }));
-      if (capturedStream) {
-        capturedStream.getTracks().forEach(t => t.stop());
-        capturedStream = null;
-      }
-    };
-
-    mediaRecorder.start(1000); // Send chunks every 1s
     isCapturing = true;
     broadcastState();
-
     return { success: true };
   } catch (e) {
     console.error('[BT] Audio capture failed:', e);
@@ -200,13 +201,19 @@ async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', transla
   }
 }
 
-function stopAudioCapture() {
+async function stopAudioCapture() {
   if (!isCapturing) return { success: false, error: 'Not capturing' };
 
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+  try {
+    // Tell offscreen doc to stop
+    await chrome.runtime.sendMessage({ action: 'stop_capture' });
+  } catch (e) {
+    // Offscreen may already be gone
+    console.warn('[BT] Error stopping capture:', e.message);
   }
+
   isCapturing = false;
+  offscreenCaptureTabId = null;
   broadcastState();
   return { success: true };
 }
@@ -293,8 +300,47 @@ function broadcastState() {
   });
 }
 
-// Handle messages from popup or content script
+// Handle messages from popup, content script, or offscreen document
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Messages from offscreen document
+  if (msg.type) {
+    switch (msg.type) {
+      case 'capture_started':
+        isCapturing = true;
+        broadcastState();
+        return false;
+
+      case 'capture_error':
+        console.error('[BT] Offscreen capture error:', msg.error);
+        isCapturing = false;
+        broadcastState();
+        return false;
+
+      case 'offscreen_ready':
+        console.log('[BT] Offscreen document ready');
+        return false;
+
+      case 'ws_closed':
+        // Offscreen's backend WS closed
+        console.log('[BT] Offscreen WS closed, capture ended');
+        isCapturing = false;
+        offscreenCaptureTabId = null;
+        broadcastState();
+        return false;
+
+      case 'backend_msg':
+        // Forward backend message (translation result) to other contexts
+        try {
+          const parsed = JSON.parse(typeof msg.data === 'string' ? msg.data : '');
+          handleBackendMessage(parsed);
+        } catch {
+          handleBackendMessage(msg.data);
+        }
+        return false;
+    }
+  }
+
+  // Messages from popup or content script
   switch (msg.action) {
     case 'get_state':
       sendResponse({
@@ -308,7 +354,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case 'stop_capture':
-      sendResponse(stopAudioCapture());
+      stopAudioCapture().then(sendResponse);
       return true;
 
     case 'ocr_capture':
