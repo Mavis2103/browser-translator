@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.9] - 2026-06-21
+
+### Fixed
+- **"Start → Stop ngay lập tức"** — Service worker passed `consumerTabId: <tab.id>` to `chrome.tabCapture.getMediaStreamId()`, but the consumer is the offscreen document, NOT the tab. This caused `getUserMedia` inside `offscreen.js` to reject, triggering `stopCapture()` immediately. Removed the erroneous `consumerTabId` parameter (Chrome 116+ allows cross-context consumption when omitted, per official Google sample).
+
 ## [v1.0.8] - 2026-06-21
 
 ### Fixed

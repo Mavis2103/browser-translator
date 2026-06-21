@@ -173,9 +173,9 @@ async function startAudioCapture(sourceLang = 'auto', targetLang = 'vi', transla
     // Ensure offscreen document exists
     await ensureOffscreenDocument();
 
-    // Get stream ID (MV3-compatible, works without user gesture)
+    // Get stream ID (MV3-compatible — omit consumerTabId so offscreen
+    // document can consume it. Chrome 116+ allows cross-context consumption.)
     const streamId = await chrome.tabCapture.getMediaStreamId({
-      consumerTabId: offscreenCaptureTabId,
       targetTabId: offscreenCaptureTabId
     });
 

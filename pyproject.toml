@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "browser-translator"
-version = "1.0.8"
+version = "1.0.9"
 description = "Local AI-powered speech-to-speech translation & OCR page translation"
 readme = "README.md"
 license = "MIT"
