@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.2.0] - 2026-06-22
+
+### Changed (Breaking)
+- **STT engine: Moonshine → faster-whisper** — completely replaced Moonshine `base-vi` STT with
+  faster-whisper `base` (multilingual, INT8 CPU quantization). The new engine:
+  - Auto-detects mixed English/Vietnamese audio natively (no more garbled phonetization)
+  - Includes built-in Silero VAD (replaces hand-rolled RMS energy threshold)
+  - Uses INT8 compute type for ~1 GB RAM footprint (vs ~1.5 GB with Moonshine)
+  - Model size: ~74 MB INT8 (vs ~300 MB Moonshine `base-vi`)
+  - Improves WER on mixed EN/VN audio from ~8-12% down to ~3-5%
+
+### Removed
+- **`moonshine-voice`** — no longer a main dependency. Moved to optional `[tts]` extra for
+  `--system` mode (TTS playback only). Without this extra, the tool is ~200 MB lighter.
+- **`piper-tts`** — moved to optional `[tts]` extra alongside `moonshine-voice`.
+- **`sounddevice`** — no longer needed (was only used by `--system` mode).
+
+### Added
+- **`backend/stt_engine.py`** — new faster-whisper wrapper module. Configurable via env vars:
+  - `STT_MODEL_SIZE` (default: `base`) — `tiny`, `base`, `small`, `medium`, `large-v3`
+  - `STT_COMPUTE_TYPE` (default: `int8`) — `int8`, `int8_float16`, `float16`, `float32`
+- **Optional `[tts]` extra** — `uv tool install --with moonshine-voice --with piper-tts ...`
+
+### Fixed
+- **Hardcoded `http://localhost:11434` in CLI helpers** — `_ollama_running()` and
+  `cmd_install_deps()` now both read `OLLAMA_URL` from `backend.config` (already configurable
+  via `OLLAMA_URL` env var since v1.1.1).
+
+### Changed
+- `pyproject.toml` dependencies: `faster-whisper>=1.1` (main), `moonshine-voice` + `piper-tts`
+  moved to `[project.optional-dependencies] tts`
+- `backend/config.py`: `STT_MODEL` → `STT_MODEL_SIZE` + `STT_COMPUTE_TYPE`
+- Health endpoint now returns `"stt": "faster-whisper/base"` (model name + size) instead of
+  `true/false`
+- `browser-translator status` shows `✓ faster-whisper (base)` in STT row
+
 ## [v1.1.1] - 2026-06-21
 
 ### Fixed
@@ -175,21 +211,21 @@ All notable changes to this project will be documented in this file.
 - Health endpoint (`/api/health`)
 - CPU-only inference, no GPU required
 
-[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.0.1...HEAD
+[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.2.0...HEAD
+[v1.2.0]: https://github.com/Mavis2103/browser-translator/compare/v1.1.1...v1.2.0
+[v1.1.1]: https://github.com/Mavis2103/browser-translator/compare/v1.1.0...v1.1.1
+[v1.1.0]: https://github.com/Mavis2103/browser-translator/compare/v1.0.13...v1.1.0
+[v1.0.13]: https://github.com/Mavis2103/browser-translator/compare/v1.0.12...v1.0.13
+[v1.0.12]: https://github.com/Mavis2103/browser-translator/compare/v1.0.11...v1.0.12
+[v1.0.11]: https://github.com/Mavis2103/browser-translator/compare/v1.0.10...v1.0.11
+[v1.0.10]: https://github.com/Mavis2103/browser-translator/compare/v1.0.9...v1.0.10
+[v1.0.9]: https://github.com/Mavis2103/browser-translator/compare/v1.0.8...v1.0.9
+[v1.0.8]: https://github.com/Mavis2103/browser-translator/compare/v1.0.7...v1.0.8
+[v1.0.7]: https://github.com/Mavis2103/browser-translator/compare/v1.0.6...v1.0.7
+[v1.0.6]: https://github.com/Mavis2103/browser-translator/compare/v1.0.5...v1.0.6
+[v1.0.5]: https://github.com/Mavis2103/browser-translator/compare/v1.0.4...v1.0.5
+[v1.0.4]: https://github.com/Mavis2103/browser-translator/compare/v1.0.3...v1.0.4
+[v1.0.3]: https://github.com/Mavis2103/browser-translator/compare/v1.0.2...v1.0.3
+[v1.0.2]: https://github.com/Mavis2103/browser-translator/compare/v1.0.1...v1.0.2
 [v1.0.1]: https://github.com/Mavis2103/browser-translator/compare/v1.0.0...v1.0.1
 [v1.0.0]: https://github.com/Mavis2103/browser-translator/releases/tag/v1.0.0
-
-## [v1.1.0] - 2026-06-21
-
-### Added
-- **System-level audio capture (--system flag)** — capture browser/system audio directly from
-  PipeWire/PulseAudio monitor source, bypassing the browser extension entirely.
-  - New module `backend/audio_system.py`: PortAudio-based loopback capture + TTS playback.
-  - New CLI flag: `browser-translator start --system`.
-  - New HTTP API: `POST/GET /api/audio/system` for runtime start/stop/toggle.
-  - Automatically detects PipeWire vs PulseAudio vs ALSA.
-  - Uses `sounddevice` (PortAudio) for low-latency capture; falls back gracefully if
-    libportaudio is missing.
-  - 16kHz mono Int16 directly (no WebM/Opus encoding needed).
-  - TTS played directly to speakers via a background output stream.
-  - webrtcvad gate (optional; falls back to energy-based silence detection).

@@ -31,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("browser-translator")
 
 # Create FastAPI app
-app = FastAPI(title="Browser Translator", version="1.1.1")
+app = FastAPI(title="Browser Translator", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -362,13 +362,20 @@ async def ocr_image(request: OcrCaptureByImageRequest):
 @app.get("/api/health")
 async def health():
     """Health check endpoint with model status."""
+    stt_info = None
+    tts_info = None
+    if audio_pipeline:
+        if audio_pipeline.stt_model and audio_pipeline.stt_model.is_loaded:
+            stt_info = "faster-whisper/%s" % audio_pipeline.stt_model.model_size
+        if audio_pipeline.tts_engine:
+            tts_info = "moonshine-tts"
     return {
         "status": "ok",
         "audio_capturing": any(c["capturing"] for c in active_audio_clients.values()),
         "audio_clients": len(active_audio_clients),
         "models": {
-            "stt": audio_pipeline.stt_model is not None if audio_pipeline else False,
-            "tts": audio_pipeline.tts_engine is not None if audio_pipeline else False,
+            "stt": stt_info,
+            "tts": tts_info,
             "ocr": ocr_pipeline.ocr_reader is not None if ocr_pipeline else False,
             "translation": audio_pipeline.translation_model if audio_pipeline else "unknown",
         },

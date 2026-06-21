@@ -17,10 +17,11 @@ TRANSLATION_MODEL_CHAIN = os.environ.get(
     "qwen3.5:0.8b,qwen3.5:1.5b"
 ).split(",")
 
-# Moonshine STT
-STT_MODEL = os.environ.get("STT_MODEL", "tiny-vi")  # Moonshine tiny-vi model
+# faster-whisper STT
+STT_MODEL_SIZE = os.environ.get("STT_MODEL_SIZE", "base")  # tiny, base, small, medium, large-v3
+STT_COMPUTE_TYPE = os.environ.get("STT_COMPUTE_TYPE", "int8")  # int8, int8_float16, float16, float32
 
-# Piper TTS
+# Piper TTS (via moonshine-voice, optional — only used with --system flag)
 PIPER_VOICE = os.environ.get("PIPER_VOICE", "vi_VN")  # Vietnamese voice
 
 # Audio settings

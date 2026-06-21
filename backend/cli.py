@@ -83,8 +83,9 @@ def _extension_dir():
 
 
 def _ollama_running():
+    from backend.config import OLLAMA_URL
     try:
-        req = urllib.request.Request("http://localhost:11434/api/tags")
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/tags")
         with urllib.request.urlopen(req, timeout=3) as r:
             return True
     except Exception:
@@ -242,11 +243,11 @@ def cmd_status(args):
 
     models = data.get("models", {})
     if models.get("stt"):
-        print("  STT:   ✓ Moonshine")
+        print("  STT:   ✓ faster-whisper (%s)" % models.get("stt"))
     else:
         print("  STT:   ✗ not loaded")
     if models.get("tts"):
-        print("  TTS:   ✓ Moonshine")
+        print("  TTS:   ✓ %s" % models.get("tts"))
     else:
         print("  TTS:   ✗ not loaded")
     if models.get("ocr"):
@@ -335,9 +336,10 @@ def cmd_install_deps(args):
         return 1
 
     # Check model
+    from backend.config import OLLAMA_URL
     import urllib.request
     try:
-        req = urllib.request.Request("http://localhost:11434/api/tags")
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/tags")
         with urllib.request.urlopen(req, timeout=3) as r:
             models = json.loads(r.read().decode())
             names = [m["name"] for m in models.get("models", [])]
@@ -354,11 +356,10 @@ def cmd_install_deps(args):
     for mod, name in [
         ("fastapi", "✓ fastapi"),
         ("uvicorn", "✓ uvicorn"),
-        ("moonshine_voice", "✓ moonshine_voice"),
-        ("moonshine_voice.tts", "✓ moonshine TTS"),
-        ("piper", "✓ piper-tts (pip name)"),  # package 'piper-tts' imports as 'piper'
+        ("faster_whisper", "✓ faster-whisper"),
         ("pydub", "✓ pydub"),
         ("aiohttp", "✓ aiohttp"),
+        ("websockets", "✓ websockets"),
     ]:
         try:
             __import__(mod)
@@ -366,6 +367,16 @@ def cmd_install_deps(args):
         except Exception as e:
             # Catch ImportError + subclass issues (e.g. pydub SyntaxWarnings on 3.13)
             print(f"  ✗ {name} — {type(e).__name__}: {e}")
+    try:
+        from moonshine_voice.tts import TextToSpeech
+        print("  ✓ moonshine-voice TTS (optional — for --system mode)")
+    except ImportError:
+        print("  - moonshine-voice TTS (optional — not installed)")
+    try:
+        from faster_whisper import WhisperModel
+        print("  ✓ faster-whisper stt (main)")
+    except ImportError:
+        print("  ✗ faster-whisper — REQUIRED")
     try:
         from paddleocr import PaddleOCR
         print("  ✓ paddleocr (optional)")

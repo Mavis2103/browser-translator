@@ -1,4 +1,4 @@
-"""Audio pipeline: Speech-to-Text (Moonshine) + Text-to-Speech (Moonshine TTS)"""
+"""Audio pipeline: Speech-to-Text (faster-whisper) + optional Text-to-Speech (Moonshine TTS)"""
 
 import logging
 from typing import Optional, Callable
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class AudioPipeline:
-    """Handles STT (Moonshine) → Translation → TTS (Moonshine TTS) pipeline."""
+    """Handles STT (faster-whisper) → Translation → optional TTS (Moonshine TTS) pipeline."""
 
     def __init__(self):
         self.stt_model = None
@@ -46,43 +46,33 @@ class AudioPipeline:
         self.translation_model = "qwen3.5:0.8b"  # may be overridden via set_language
 
     def load_models(self, tts: bool = True):
-        """Load Moonshine STT and optionally TTS models concurrently.
+        """Load faster-whisper STT and optionally Moonshine TTS.
 
         Args:
-            tts: If True (default), load the TTS engine. Set False for
+            tts: If True, load the TTS engine (Moonshine). Set False for
                  STT-only mode (extension-based capture without playback).
 
-        STT + TTS live in the same library but load weight files independently,
-        so we run them on two threads to cut the total cold-load time roughly
-        in half (~5s → ~2-3s on a typical SSD).
+        STT loads via faster-whisper (multilingual, INT8 CPU).
+        TTS loads via moonshine_voice.tts (Moonshine TTS) when needed.
+        Both load concurrently to cut cold-start time.
         """
         if self._loaded:
             return
 
         import threading
 
-        logger.info("Loading Moonshine STT + TTS concurrently...")
+        logger.info("Loading STT + TTS concurrently...")
 
-        # moonshine_voice touches disk via download() in both code paths.
-        # A shared lock prevents races when both threads first-touch the same asset.
-        download_lock = threading.Lock()
         _errors: dict = {}
 
         def _load_stt_thread():
             try:
-                from moonshine_voice.download import get_model_for_language
-                from moonshine_voice.transcriber import Transcriber
-                with download_lock:
-                    model_path, model_arch = get_model_for_language('vi')
-                logger.info("Moonshine STT path: %s (arch: %s)", model_path, model_arch)
-                self.stt_model = Transcriber(
-                    model_path=str(model_path),
-                    model_arch=model_arch,
-                )
-                logger.info("Moonshine STT loaded successfully")
+                from .stt_engine import FasterWhisperEngine
+                self.stt_model = FasterWhisperEngine()
+                self.stt_model.load()
             except Exception as e:
                 _errors["stt"] = e
-                logger.error("Failed to load Moonshine STT: %s", e)
+                logger.error("Failed to load faster-whisper STT: %s", e)
 
         def _load_tts_thread():
             if not tts:
@@ -90,12 +80,11 @@ class AudioPipeline:
                 return
             try:
                 from moonshine_voice.tts import TextToSpeech
-                with download_lock:
-                    self.tts_engine = TextToSpeech(
-                        language="vi-vn",
-                        voice="piper_vi_VN-vais1000-medium",
-                        download=True,
-                    )
+                self.tts_engine = TextToSpeech(
+                    language="vi-vn",
+                    voice="piper_vi_VN-vais1000-medium",
+                    download=True,
+                )
                 logger.info("Moonshine TTS loaded successfully")
             except Exception as e:
                 _errors["tts"] = e
@@ -115,7 +104,7 @@ class AudioPipeline:
 
         self._loaded = True
         loaded = ["STT" if self.stt_model else None, "TTS" if self.tts_engine else None]
-        logger.info("Moonshine pipeline ready: %s", ", ".join(x for x in loaded if x))
+        logger.info("Pipeline ready: %s", ", ".join(x for x in loaded if x))
 
     def process_audio_chunk(self, chunk_data: bytes):
         """Process an incoming audio chunk from WebSocket.
@@ -193,7 +182,7 @@ class AudioPipeline:
         Current protocol (v1.0.9+): the extension streams raw PCM16 LE 16kHz
         mono from offscreen.js — never WebM. WebM/Opus decoding is kept as a
         defensive fallback for legacy clients, but the pydub path is broken on
-        Python 3.13 (`pyaudioop` removed). We bail out of the pydub path
+        Python 3.13 (``pyaudioop`` removed). We bail out of the pydub path
         cleanly rather than crashing the backend with
         ``No module named 'pyaudioop'``.
         """
@@ -218,7 +207,7 @@ class AudioPipeline:
         return chunk_data
 
     def _process_buffer(self):
-        """Transcribe buffered audio, translate it, and generate TTS."""
+        """Transcribe buffered audio, translate it, and optionally generate TTS."""
         if self.flushing:
             return
         if len(self.audio_buffer) < SAMPLE_RATE * 2:  # Need at least 1 second
@@ -232,21 +221,14 @@ class AudioPipeline:
             # No spoken content in the buffered window — keep waiting
             return
 
-        # Convert buffer to numpy array
+        # Convert buffer to numpy array (float32 [-1, 1])
         audio_array = np.frombuffer(self.audio_buffer, dtype=np.int16).astype(np.float32) / 32768.0
 
         self.flushing = True
         try:
-            # STT
+            # STT — faster-whisper (multilingual, auto-detect EN/VN)
             logger.debug("Transcribing %d samples...", len(audio_array))
-            transcript = self.stt_model.transcribe_without_streaming(
-                audio_array.tolist(), sample_rate=SAMPLE_RATE
-            )
-            text = ""
-            for line in transcript.lines:
-                if line.text.strip():
-                    text += line.text.strip() + " "
-            text = text.strip()
+            text = self.stt_model.transcribe(audio_array, sample_rate=SAMPLE_RATE)
 
             if not text:
                 logger.debug("No speech detected")
@@ -264,7 +246,7 @@ class AudioPipeline:
                 if self.on_translation:
                     self.on_translation(text, translated, self.source_lang, self.target_lang)
 
-                # TTS
+                # TTS (optional — only when loaded, e.g. --system mode)
                 if self.tts_engine:
                     self._generate_tts(translated)
 
@@ -297,7 +279,11 @@ class AudioPipeline:
                          n, self.buffer_duration)
 
     def _generate_tts(self, text: str):
-        """Generate TTS audio from translated text."""
+        """Generate TTS audio from translated text.
+
+        Only available when TTS engine was loaded (--system mode).
+        In STT-only mode (extension default), this is a no-op.
+        """
         if not self.tts_engine:
             logger.debug("TTS engine not available")
             return
@@ -311,11 +297,6 @@ class AudioPipeline:
                 return
 
             # Convert float [-1,1] to int16 PCM with careful gain staging.
-            # The moonshine_voice wrapper feeds piper VoC samples through a
-            # 22050→24000 resampler which *quietens* peaks. We restore level
-            # but only TRIM silence/quiet regions to avoid amplifying the
-            # noise floor into clipping. RMS-based gain control is more
-            # robust than naive peak normalisation on TTS with long silences.
             import base64
             samples_arr = np.array(samples, dtype=np.float64)
             if samples_arr.size == 0:

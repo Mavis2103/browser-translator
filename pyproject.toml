@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "browser-translator"
-version = "1.1.1"
-description = "Local AI-powered speech-to-speech translation & OCR page translation"
+version = "1.2.0"
+description = "Local AI-powered speech-to-text translation & OCR page translation (faster-whisper)"
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -26,8 +26,7 @@ dependencies = [
     "uvicorn>=0.27",
     "fastapi>=0.100",
     "pydantic>=2.0",
-    "moonshine-voice>=0.0.62",
-    "piper-tts>=1.2.0",
+    "faster-whisper>=1.1",
     "pydub>=0.25,<0.26",
     "aiohttp>=3.9",
     "websockets>=12.0",
@@ -37,6 +36,10 @@ dependencies = [
 ocr = [
     "paddleocr>=3.7",
     "paddlepaddle>=3.0",
+]
+tts = [
+    "moonshine-voice>=0.0.62",
+    "piper-tts>=1.2.0",
 ]
 
 [project.urls]
