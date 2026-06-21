@@ -1,0 +1,2 @@
+# Include extension files in source distribution (for wheel builds from git/PyPI)
+recursive-include backend/extension *

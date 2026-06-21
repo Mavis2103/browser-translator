@@ -122,7 +122,7 @@ if [ "$STATUS" != "ok" ]; then
 fi
 
 # 5. Launch Chrome with extension
-EXTENSION_PATH="$DIR/extension"
+EXTENSION_PATH="$DIR/backend/extension"
 echo "[*] Launching Chrome with extension: $EXTENSION_PATH"
 
 nohup google-chrome \

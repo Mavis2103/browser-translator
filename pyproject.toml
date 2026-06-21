@@ -7,7 +7,7 @@ name = "browser-translator"
 version = "1.0.4"
 description = "Local AI-powered speech-to-speech translation & OCR page translation"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "Mavis", email = "taquanvku@gmail.com" },
 ]
@@ -16,7 +16,6 @@ keywords = ["translation", "ai", "local", "speech", "ocr", "browser"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -50,4 +49,4 @@ browser-translator = "backend.cli:main"
 include = ["backend*"]
 
 [tool.setuptools.package-data]
-backend = ["py.typed"]
+backend = ["py.typed", "extension/**/*"]

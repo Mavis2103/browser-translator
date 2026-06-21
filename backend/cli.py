@@ -24,13 +24,13 @@ from pathlib import Path
 
 # ── helpers ──────────────────────────────────────────────────────
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
 BT_DIR = DATA_HOME / "browser-translator"
 BT_DIR.mkdir(parents=True, exist_ok=True)
 
 PID_FILE = BT_DIR / "backend.pid"
 LOG_FILE = BT_DIR / "backend.log"
+DIST_DIR = BT_DIR / "dist"  # for build-ext output when installed from wheel
 
 
 def _find_ollama():
@@ -45,6 +45,40 @@ def _find_ollama():
     ):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
+    return None
+
+
+def _project_root():
+    """Detect the repo root (development/editable install only)."""
+    p = Path(__file__).resolve().parent.parent
+    if (p / "backend" / "__init__.py").exists() and (p / "pyproject.toml").is_file():
+        return p
+    return None
+
+
+def _extension_dir():
+    """Locate the extension/ directory — bundled in wheel or relative to source."""
+    # 1) Editable / development install: find relative to project root
+    root = _project_root()
+    if root:
+        dev = root / "extension"
+        if dev.is_dir():
+            return dev.resolve()
+        dev2 = root / "backend" / "extension"
+        if dev2.is_dir():
+            return dev2.resolve()
+    # 2) Installed from wheel: use importlib.resources
+    try:
+        import importlib.resources
+        ref = importlib.resources.files("backend") / "extension"
+        if ref.is_dir():
+            return ref
+    except (ModuleNotFoundError, TypeError, ImportError, AttributeError):
+        pass
+    # 3) In-package data (fallback)
+    pkg = Path(__file__).parent / "extension"
+    if pkg.is_dir():
+        return pkg.resolve()
     return None
 
 
@@ -137,7 +171,6 @@ def cmd_start(args):
             cmd,
             stdout=logf,
             stderr=subprocess.STDOUT,
-            cwd=str(PROJECT_ROOT),
         )
 
     PID_FILE.write_text(str(proc.pid))
@@ -222,37 +255,24 @@ def cmd_status(args):
 
 def cmd_build_ext(args):
     """Package the Chrome extension as a distributable .zip."""
-    ext_dir = PROJECT_ROOT / "extension"
-    if not ext_dir.is_dir():
-        print(f"! Extension directory not found: {ext_dir}")
-        print("  Run this from the browser-translator repository root.")
+    ext_dir = _extension_dir()
+    if not ext_dir:
+        print("! Extension directory not found.")
+        print("  Re-install with: uv tool install --reinstall 'git+https://github.com/Mavis2103/browser-translator'")
         return 1
 
-    dist_dir = PROJECT_ROOT / "dist"
+    dist_dir = DIST_DIR
     dist_dir.mkdir(parents=True, exist_ok=True)
 
     from backend import __version__ as ver
     out_name = f"browser-translator-extension-v{ver}.zip"
-    out_path = dist_dir / out_name
-
-    # Zip it
-    shutil.make_archive(
-        str(out_path.with_suffix("")),  # strip .zip — make_archive adds it
-        "zip",
-        root_dir=str(ext_dir.parent),   # project root so paths are extension/...
-        base_dir="extension",           # only the extension folder
-    )
-
-    # Account for make_archive adding .zip
-    actual = dist_dir / out_name.replace(".zip", "") / ".." / out_name
-    # simpler: just build the path we expect
-    final = dist_dir / f"extension"  # make_archive creates this
-    # Let me just use zipfile directly for clarity
-    import zipfile
     final_zip = dist_dir / out_name
+
+    import zipfile
     with zipfile.ZipFile(final_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         for fpath in ext_dir.rglob("*"):
             if fpath.is_file():
+                # Arcname = extension/...  (relative to parent of extension/)
                 arcname = str(fpath.relative_to(ext_dir.parent))
                 zf.write(fpath, arcname)
 
@@ -289,17 +309,7 @@ def cmd_install_deps(args):
         print("(apt-get not found. Ensure ffmpeg is installed manually.)")
 
     print()
-    print("=== Python dependencies ===")
-    # Detect uv vs pip
-    uv = shutil.which("uv")
-    if uv:
-        subprocess.check_call([uv, "pip", "install", "-r",
-                               str(PROJECT_ROOT / "requirements.txt")])
-    else:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-r",
-             str(PROJECT_ROOT / "requirements.txt")],
-        )
+    print("=== Python dependencies === (should already be installed by uv tool)")
 
     print()
     print("=== Ollama ===")

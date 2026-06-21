@@ -22,20 +22,16 @@ Local AI-powered tool for **speech-to-speech translation** and **OCR page transl
 ## Quick Start (on a new machine)
 
 ```bash
-# 1. Clone
-git clone https://github.com/Mavis2103/browser-translator.git
-cd browser-translator
+# 1. Install the CLI globally (no git clone needed)
+uv tool install 'git+https://github.com/Mavis2103/browser-translator'
 
-# 2. Install as a global tool (pins deps + makes `browser-translator` available everywhere)
-uv tool install -e .
-
-# 3. Install system + Python deps
+# 2. Install system + Python deps
 browser-translator install-deps
 
-# 4. Start Ollama (if not already running)
+# 3. Start Ollama (if not already running)
 ollama serve &
 
-# 5. Start the backend
+# 4. Start the backend
 browser-translator start
 #   → Ctrl+C to stop
 #   → Or: browser-translator start --daemon  (background, use `stop` to kill)
@@ -44,7 +40,13 @@ browser-translator start
 ```
 # Load extension in Chrome
 chrome://extensions  →  Developer mode  →  Load unpacked
-Select: browser-translator/extension/
+Select: browser-translator/backend/extension/
+
+# If installed via git clone, the extension is at:
+#   browser-translator/backend/extension/
+# If only the CLI was installed (no clone), get the extension separately:
+#   1. browser-translator build-ext    (creates a .zip)
+#   2. Extract and load in Chrome
 ```
 
 Then click the 🌐 icon in the Chrome toolbar to open the control panel.
@@ -139,23 +141,24 @@ pip install paddleocr paddlepaddle
 
 ```
 browser-translator/
-├── extension/              # Chrome Extension (MV3)
-│   ├── manifest.json
-│   ├── background.js       # Service worker (tabCapture, WebSocket)
-│   ├── popup.html          # Control panel UI
-│   ├── popup.js
-│   ├── content.js          # Content script (overlays, toasts)
-│   ├── content.css
-│   ├── styles.css
-│   └── icons/
 ├── backend/                # Python Backend (package)
-│   ├── __init__.py         # ← now a proper package
+│   ├── __init__.py
 │   ├── cli.py              # uv tool entry point (browser-translator)
 │   ├── main.py             # FastAPI server (WebSocket + HTTP)
 │   ├── config.py           # Configuration (env-var driven)
 │   ├── audio_pipeline.py   # STT → Translation → TTS
 │   ├── ocr_pipeline.py     # Screenshot → OCR → Translation
-│   └── translation.py      # Ollama translation client
+│   ├── translation.py      # Ollama translation client
+│   ├── extension/          # ← Chrome Extension (MV3) bundled in wheel
+│   │   ├── manifest.json
+│   │   ├── background.js
+│   │   ├── popup.html
+│   │   ├── popup.js
+│   │   ├── content.js
+│   │   ├── content.css
+│   │   ├── styles.css
+│   │   └── icons/
+├── extension -> backend/extension/  # symlink for backward compat
 ├── scripts/
 │   ├── start.sh            # Legacy: auto-start backend + Chrome (w/ extension)
 │   └── install.sh          # Legacy: first-time setup
