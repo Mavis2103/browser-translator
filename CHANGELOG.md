@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.0.7] - 2026-06-21
+
+### Fixed
+- **WebSocket `/ws/audio` 404** — `uvicorn` was missing the `websockets` library, so it silently returned 404 on the `Upgrade: websocket` request instead of `101 Switching Protocols`. Added `websockets>=12.0` as a hard dependency (no more relying on `uvicorn[standard]` extras resolution). Extension now connects on first load.
+
 ## [v1.0.6] - 2026-06-21
 
 ### Fixed

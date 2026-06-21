@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "browser-translator"
-version = "1.0.6"
+version = "1.0.7"
 description = "Local AI-powered speech-to-speech translation & OCR page translation"
 readme = "README.md"
 license = "MIT"
@@ -30,6 +30,7 @@ dependencies = [
     "piper-tts>=1.2.0",
     "pydub>=0.25,<0.26",
     "aiohttp>=3.9",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
