@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Browser Translator",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Local AI-powered speech-to-text translation & OCR page translation (faster-whisper)",
   "minimum_chrome_version": "116",
   "permissions": [

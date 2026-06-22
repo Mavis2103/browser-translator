@@ -17,8 +17,8 @@ TRANSLATION_MODEL_CHAIN = os.environ.get(
     "qwen3.5:0.8b,qwen3.5:1.5b"
 ).split(",")
 
-# Translation engine: "ollama" (default) or "nllb"
-TRANSLATION_ENGINE = os.environ.get("TRANSLATION_ENGINE", "nllb")
+# Translation engine: "ollama" (default) or "nllb" (requires manual model setup)
+TRANSLATION_ENGINE = os.environ.get("TRANSLATION_ENGINE", "ollama")
 
 # NLLB model path (CTranslate2 format, can be HF model name or local dir)
 NLLB_MODEL_PATH = os.environ.get(
