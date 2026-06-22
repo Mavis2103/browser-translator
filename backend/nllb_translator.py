@@ -55,8 +55,8 @@ def _auto_setup():
     except ImportError:
         logger.warning(
             "PyTorch (torch) not found — cannot convert NLLB model.\n"
-            "  Install with: uv tool install --reinstall --with nllb "
-            "'git+https://github.com/Mavis2103/browser-translator'\n"
+            "  Install with: uv tool install --reinstall "
+            "'git+https://github.com/Mavis2103/browser-translator[nllb]'\n"
             "  Falling back to Ollama translation."
         )
         return False
