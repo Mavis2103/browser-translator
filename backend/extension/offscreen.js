@@ -11,7 +11,9 @@ let ws = null;
 let audioContext = null;
 let sourceNode = null;
 let processorNode = null;
+let muteNode = null;
 let capturedStream = null;
+let audioPlaybackEl = null;
 let isCapturing = false;
 let isStopped = false;  // set true on user stop — skip reconnect
 let chunkSeq = 0;
@@ -131,10 +133,20 @@ function stopCapture() {
     reconnectTimer = null;
   }
   stopKeepalive();
+  // Clean up audio playback element
+  if (audioPlaybackEl) {
+    audioPlaybackEl.pause();
+    audioPlaybackEl.srcObject = null;
+    audioPlaybackEl = null;
+  }
   if (processorNode) {
     try { processorNode.disconnect(); } catch (e) { /* may already be disconnected */ }
     processorNode.onaudioprocess = null;
     processorNode = null;
+  }
+  if (muteNode) {
+    try { muteNode.disconnect(); } catch (e) { /* ignore */ }
+    muteNode = null;
   }
   if (sourceNode) {
     try { sourceNode.disconnect(); } catch (e) { /* may already be disconnected */ }
@@ -166,6 +178,10 @@ function restartAudioPipeline(sourceLang, targetLang, translationModel) {
     try { processorNode.disconnect(); } catch (e) { /* ignore */ }
     processorNode = null;
   }
+  if (muteNode) {
+    try { muteNode.disconnect(); } catch (e) { /* ignore */ }
+    muteNode = null;
+  }
   if (sourceNode) {
     try { sourceNode.disconnect(); } catch (e) { /* ignore */ }
     sourceNode = null;
@@ -191,7 +207,18 @@ function restartAudioPipeline(sourceLang, targetLang, translationModel) {
   };
 
   sourceNode.connect(processorNode);
-  processorNode.connect(audioContext.destination);
+  // Create mute node so onaudioprocess fires but no processed audio reaches speakers
+  muteNode = audioContext.createGain();
+  muteNode.gain.value = 0;
+  processorNode.connect(muteNode);
+  muteNode.connect(audioContext.destination);
+
+  // Play original quality audio via <audio> element using the captured stream
+  if (!audioPlaybackEl) {
+    audioPlaybackEl = new Audio();
+  }
+  audioPlaybackEl.srcObject = capturedStream;
+  audioPlaybackEl.play().catch(e => console.warn('[BT-Offscreen] Audio playback start failed:', e));
 
   console.log('[BT-Offscreen] Audio pipeline restarted after WS reconnect');
   chrome.runtime.sendMessage({ type: 'capture_reconnected' });
@@ -232,7 +259,16 @@ async function startCapture(streamId, sourceLang, targetLang, translationModel) 
     };
 
     sourceNode.connect(processorNode);
-    processorNode.connect(audioContext.destination);
+    // Mute the processed audio output — onaudioprocess still fires, STT unaffected
+    muteNode = audioContext.createGain();
+    muteNode.gain.value = 0;
+    processorNode.connect(muteNode);
+    muteNode.connect(audioContext.destination);
+
+    // Play original quality audio via <audio> element
+    audioPlaybackEl = new Audio();
+    audioPlaybackEl.srcObject = capturedStream;
+    audioPlaybackEl.play().catch(e => console.warn('[BT-Offscreen] Audio playback start failed:', e));
 
     isCapturing = true;
     chrome.runtime.sendMessage({ type: 'capture_started' });
