@@ -59,5 +59,9 @@ SERVER_PORT = int(os.environ.get("SERVER_PORT", "8765"))
 # Logging
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
+# Hermes webhook integration (optional — for TOEIC speaking practice automation)
+HERMES_WEBHOOK_URL = os.environ.get("HERMES_WEBHOOK_URL", "")
+HERMES_WEBHOOK_SECRET = os.environ.get("HERMES_WEBHOOK_SECRET", "")
+
 # Ensure data dir exists
 DATA_DIR.mkdir(parents=True, exist_ok=True)

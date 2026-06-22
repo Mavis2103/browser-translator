@@ -18,7 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from backend.config import SERVER_HOST, SERVER_PORT, LOG_LEVEL, PROJECT_DIR
+from backend.config import SERVER_HOST, SERVER_PORT, LOG_LEVEL, PROJECT_DIR, HERMES_WEBHOOK_URL, HERMES_WEBHOOK_SECRET
 from backend.audio_pipeline import AudioPipeline
 from backend.ocr_pipeline import OcrPipeline
 
@@ -149,6 +149,41 @@ async def check_ollama():
         logger.warning("Could not check Ollama: %s", e)
 
 
+# ── Hermes webhook (optional, pushes every translation to Hermes Agent) ──
+
+
+def _fire_hermes_webhook(original, translated, source, target):
+    """POST translation result to Hermes webhook (fire-and-forget)."""
+    webhook_url = HERMES_WEBHOOK_URL
+    if not webhook_url:
+        return
+    import hashlib, hmac, json, urllib.request
+    try:
+        body = json.dumps({
+            "type": "translation",
+            "original": original,
+            "translated": translated,
+            "source_lang": source,
+            "target_lang": target,
+        }).encode("utf-8")
+        # HMAC-SHA256 signature
+        secret = HERMES_WEBHOOK_SECRET.encode("utf-8") if HERMES_WEBHOOK_SECRET else b""
+        sig = hmac.new(secret, body, hashlib.sha256).hexdigest()
+        req = urllib.request.Request(
+            webhook_url,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": f"sha256={sig}",
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+        logger.debug("Hermes webhook sent: %r → %r", original[:50], translated[:50])
+    except Exception as e:
+        logger.debug("Hermes webhook POST failed: %s", e)
+
+
 # ========== WebSocket: Audio Streaming ==========
 
 @app.websocket("/ws/audio")
@@ -198,6 +233,8 @@ async def websocket_audio(websocket: WebSocket):
             "source": source,
             "target": target,
         }))
+        # Fire Hermes webhook (optional — sends translation to Hermes Agent)
+        _fire_hermes_webhook(original, translated, source, target)
 
     def on_tts_audio(b64_data, sample_rate):
         schedule(websocket.send_json({
