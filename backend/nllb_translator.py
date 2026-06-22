@@ -49,6 +49,18 @@ def _auto_setup():
     parent = os.path.dirname(model_path)
     os.makedirs(parent, exist_ok=True)
 
+    # Conversion needs torch to load the HF model
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        logger.warning(
+            "PyTorch (torch) not found — cannot convert NLLB model.\n"
+            "  Install with: uv tool install --reinstall --with nllb "
+            "'git+https://github.com/Mavis2103/browser-translator'\n"
+            "  Falling back to Ollama translation."
+        )
+        return False
+
     import ctranslate2
     import transformers
 

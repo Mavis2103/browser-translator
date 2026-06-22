@@ -65,9 +65,14 @@ function sendToBackend(data) {
 
 function handleBackendMessage(data) {
   try {
-    // Try to parse as JSON first
-    const msg = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data));
-    
+    // Accept both raw JSON string AND pre-parsed object (from backend_msg route)
+    let msg;
+    if (typeof data === 'object' && data !== null && data.type) {
+      msg = data;  // Already parsed by backend_msg handler
+    } else {
+      msg = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data));
+    }
+
     switch (msg.type) {
       case 'translation':
         // Send translation result to active tab
