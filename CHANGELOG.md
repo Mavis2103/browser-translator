@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.3.2] - 2026-06-22
+
+### Added
+- **Auto-download + convert NLLB model on first use** — no more manual `ct2-transformers-converter`.
+  On first translation, the backend downloads `facebook/nllb-200-distilled-600M` from HuggingFace
+  (2.3 GB, cached), converts to CTranslate2 INT8 (594 MB), and loads it. Subsequent runs use
+  the cached CT2 model directly (~8s load).
+- **`torch` added to `[nllb]` extras** — required for model conversion (not needed for inference).
+
+### Changed
+- `TRANSLATION_ENGINE` defaults to `"nllb"` again — fresh installs get NLLB automatically
+  after the one-time auto-setup.
+
 ## [v1.3.1] - 2026-06-22
 
 ### Fixed
@@ -287,7 +300,8 @@ download script on first run.
 - Health endpoint (`/api/health`)
 - CPU-only inference, no GPU required
 
-[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.3.1...HEAD
+[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.3.2...HEAD
+[v1.3.2]: https://github.com/Mavis2103/browser-translator/compare/v1.3.1...v1.3.2
 [v1.3.1]: https://github.com/Mavis2103/browser-translator/compare/v1.3.0...v1.3.1
 [v1.3.0]: https://github.com/Mavis2103/browser-translator/compare/v1.2.1...v1.3.0
 [v1.2.1]: https://github.com/Mavis2103/browser-translator/compare/v1.2.0...v1.2.1
