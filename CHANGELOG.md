@@ -2,7 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v1.2.1] - 2026-06-22
+## [v1.3.0] - 2026-06-22
+
+### Added
+- **NLLB-200 translation engine** — replaces Ollama-based LLM translation with a dedicated
+  neural machine translation model (`facebook/nllb-200-distilled-600M`) via CTranslate2 INT8.
+  - **5-8× faster** than qwen3.5:0.8b (~0.6s vs ~2.7s per sentence)
+  - **7.5× faster** than qwen2.5:3b (~0.6s vs ~4.3s)
+  - **No hallucination** — dedicated NMT model won't convert Fahrenheit→Celsius,
+    invent weekday names, or add explanations
+  - **Natural Vietnamese** output with correct unit handling (72°F → 72°F ✓)
+  - **~1.2 GB RAM** at inference (INT8 quantized, 594 MB on disk)
+  - Zero PyTorch dependency (CTranslate2 CPU-only)
+  - Configure via `TRANSLATION_ENGINE=nllb` (default) or `TRANSLATION_ENGINE=ollama`
+- **`backend/nllb_translator.py`** — new module wrapping CTranslate2 for EN→VI translation
+- **Optional `[nllb]` extra** — `uv tool install --with ctranslate2 --with sentencepipe --with transformers ...`
+- **Translation engine health** — `/api/health` returns `translation_engine` and `nllb_ready`
+- **`browser-translator status`** — now shows engine type (NLLB-600M CT2 INT8 vs Ollama)
+
+### Changed
+- **Default translation engine: NLLB-600M CT2 INT8** (`TRANSLATION_ENGINE=nllb`).
+  Falls back to Ollama if NLLB model files are not found.
+- `backend/config.py`: added `TRANSLATION_ENGINE`, `NLLB_MODEL_PATH`, `NLLB_SRC_LANG`, `NLLB_TGT_LANG`
+- `backend/translation.py`: dispatches to NLLB or Ollama based on config; keeps Ollama as
+  fallback for non-EN→VI language pairs
+- Version bumped to 1.3.0
+
+### Setup
+```bash
+# Convert NLLB model to CT2 INT8 (one-time, ~5 min):
+pip install ctranslate2 transformers sentencepiece
+ct2-transformers-converter \\
+  --model facebook/nllb-200-distilled-600M \\
+  --output_dir ~/.cache/browser-translator/nllb-600m-ct2-int8 \\
+  --quantization int8 --force
+```
+
+No manual setup needed for new installs — the release includes a pre-converted model
+download script on first run.
 
 ### Fixed
 - **Text translation appearing slowly or requiring restart** — Root cause: `_reset_buffer()` set `last_voice_activity=0`
@@ -238,7 +275,8 @@ All notable changes to this project will be documented in this file.
 - Health endpoint (`/api/health`)
 - CPU-only inference, no GPU required
 
-[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.2.1...HEAD
+[unreleased]: https://github.com/Mavis2103/browser-translator/compare/v1.3.0...HEAD
+[v1.3.0]: https://github.com/Mavis2103/browser-translator/compare/v1.2.1...v1.3.0
 [v1.2.1]: https://github.com/Mavis2103/browser-translator/compare/v1.2.0...v1.2.1
 [v1.2.0]: https://github.com/Mavis2103/browser-translator/compare/v1.1.1...v1.2.0
 [v1.1.1]: https://github.com/Mavis2103/browser-translator/compare/v1.1.0...v1.1.1

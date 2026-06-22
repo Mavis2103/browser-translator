@@ -255,6 +255,12 @@ def cmd_status(args):
     else:
         print("  OCR:   ✗ not loaded")
     print(f"  LLM:   {models.get('translation', '?')}")
+    engine = models.get('translation_engine', 'ollama')
+    if engine == 'nllb':
+        nllb_ready = models.get('nllb_ready', False)
+        print(f"  Engine: NLLB-600M CT2 INT8 {'✓' if nllb_ready else '○ (lazy-load)'}")
+    else:
+        print(f"  Engine: Ollama")
     return 0
 
 

@@ -17,6 +17,18 @@ TRANSLATION_MODEL_CHAIN = os.environ.get(
     "qwen3.5:0.8b,qwen3.5:1.5b"
 ).split(",")
 
+# Translation engine: "ollama" (default) or "nllb"
+TRANSLATION_ENGINE = os.environ.get("TRANSLATION_ENGINE", "nllb")
+
+# NLLB model path (CTranslate2 format, can be HF model name or local dir)
+NLLB_MODEL_PATH = os.environ.get(
+    "NLLB_MODEL_PATH",
+    str(Path.home() / ".cache" / "browser-translator" / "nllb-600m-ct2-int8")
+)
+# NLLB source/target language codes (FLORES-200 codes)
+NLLB_SRC_LANG = os.environ.get("NLLB_SRC_LANG", "eng_Latn")
+NLLB_TGT_LANG = os.environ.get("NLLB_TGT_LANG", "vie_Latn")
+
 # faster-whisper STT
 STT_MODEL_SIZE = os.environ.get("STT_MODEL_SIZE", "base")  # tiny, base, small, medium, large-v3
 STT_COMPUTE_TYPE = os.environ.get("STT_COMPUTE_TYPE", "int8")  # int8, int8_float16, float16, float32

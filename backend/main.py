@@ -372,6 +372,23 @@ async def health():
             stt_info = "faster-whisper/%s" % audio_pipeline.stt_model.model_size
         if audio_pipeline.tts_engine:
             tts_info = "moonshine-tts"
+
+    # Translation engine info
+    from backend.config import TRANSLATION_ENGINE
+    engine = TRANSLATION_ENGINE
+    translation_info = audio_pipeline.translation_model if audio_pipeline else "unknown"
+    if engine == "nllb":
+        translation_info = f"nllb-200-distilled-600m (ct2 int8)"
+
+    # NLLB availability
+    nllb_ready = False
+    if engine == "nllb":
+        try:
+            from . import nllb_translator
+            nllb_ready = nllb_translator._translator is not None
+        except Exception:
+            pass
+
     return {
         "status": "ok",
         "audio_capturing": any(c["capturing"] for c in active_audio_clients.values()),
@@ -380,9 +397,10 @@ async def health():
             "stt": stt_info,
             "tts": tts_info,
             "ocr": ocr_pipeline.ocr_reader is not None if ocr_pipeline else False,
-            "translation": audio_pipeline.translation_model if audio_pipeline else "unknown",
+            "translation": translation_info,
+            "translation_engine": engine,
+            "nllb_ready": nllb_ready,
         },
-        "ollama_available": True,
     }
 
 
